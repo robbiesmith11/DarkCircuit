@@ -1,6 +1,20 @@
 import streamlit as st
 import requests
-from models.v1 import*
+
+import importlib.util
+import sys
+
+# Define the absolute path to the module
+module_path = r'C:\Users\calip\Desktop\DarkCircuit-\DarkCircuit-\models\v1.py'
+
+# Load the module
+spec = importlib.util.spec_from_file_location("v1", module_path)
+v1 = importlib.util.module_from_spec(spec)
+sys.modules["v1"] = v1
+spec.loader.exec_module(v1)
+
+# Now you can use the deploy_war function
+deploy_war = v1.deploy_war
 
 st.title("HTB: hardocded")
 target_ip = st.text_input("Target IP", value="10.10.10.10")
@@ -26,4 +40,4 @@ if war_file is not None:
                 st.error(f"Deployment failed. Status code: {response.status_code}")
                 st.text_area("Response", response.text, height=100)
         except Exception as e:
-        st.error(f"Error during deployment: {e}")
+            st.error(f"Error during deployment: {e}")
