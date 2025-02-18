@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  streamlit-ui:
+    container_name: streamlit-ui
+    build:
+      context: ./streamlit
+    ports:
+      - "8501:8501"
+    depends_on:
+      - ollama
+      - kali
+    networks:
+      - ai-hacking-net
+    volumes:
+      - ./streamlit:/app
+    environment:
+      - OLLAMA_API_URL=http://ollama:11434
+      - KALI_SSH_HOST=kali
+      - KALI_SSH_USER=root
+      - KALI_SSH_PASS=kali
+
+  ollama:
+    container_name: ollama
+    build:
+      context: ./ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - ai-hacking-net
+    volumes:
+      - ./ollama/src:/root/.ollama  # Shared model storage
+
+  kali:
+    container_name: kali
+    build:
+      context: ./kali  # Build from the kali directory
+    stdin_open: true
+    tty: true
+    ports:
+      - "2222:22"
+    networks:
+      - ai-hacking-net
+    privileged: true
+    volumes:
+      - kali-home:/root
+
+
+volumes:
+  kali-home:
+
+networks:
+  ai-hacking-net:
+    driver: bridge
