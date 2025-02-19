@@ -1,3 +1,5 @@
+import subprocess
+
 import streamlit as st
 import requests
 import paramiko
@@ -13,6 +15,44 @@ KALI_SSH_PASS = "kali"
 
 st.set_page_config(layout="wide")
 st.title("AI Hacking Lab")
+
+# ----------------------
+# VPN Connection Section (Sidebar)
+# ----------------------
+st.sidebar.header("VPN Connection Setup")
+vpn_file = st.sidebar.file_uploader("Upload your VPN (.ovpn) file", type=["ovpn"])
+
+
+# Use session state to track VPN connection status
+if "vpn_connected" not in st.session_state:
+    st.session_state.vpn_connected = False
+
+if not st.session_state.vpn_connected:
+    if st.sidebar.button("Connect VPN"):
+        if vpn_file:
+            # Save VPN file to a known location in the container
+            with open(VPN_FILE_PATH, "wb") as f:
+                f.write(vpn_file.getbuffer())
+
+            # Command to start OpenVPN in the Kali container
+            # (Make sure the container name matches, e.g., "kali")
+            connect_cmd = f"docker exec kali openvpn --config {VPN_FILE_PATH}"
+
+            try:
+                process = subprocess.Popen(connect_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                output, error = process.communicate(timeout=30)
+                if error:
+                    st.sidebar.error(f"VPN connection failed: {error.decode('utf-8')}")
+                else:
+                    st.sidebar.success("VPN connected successfully!")
+                    st.session_state.vpn_connected = True
+
+            except Exception as e:
+                st.sidebar.error(f"Error: {str(e)}")
+        else:
+            st.sidebar.warning("Please upload a VPN file")
+else:
+    st.sidebar.success("VPN already connected.")
 
 col1, col2 = st.columns(2)
 
