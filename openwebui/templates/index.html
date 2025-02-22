@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AI Hacking Lab - OpenWebUI</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>AI Hacking Lab</h1>
+
+  <!-- VPN Connection -->
+  <section>
+    <h2>VPN Connection</h2>
+    <form id="vpn-form" enctype="multipart/form-data">
+      <input type="file" name="vpn_file" accept=".ovpn" required>
+      <button type="submit">Connect VPN</button>
+    </form>
+    <pre id="vpn-output"></pre>
+  </section>
+
+  <!-- LLM Chat -->
+  <section>
+    <h2>LLM Chat</h2>
+    <div>
+      <label for="model">Select Model:</label>
+      <select id="model"></select>
+    </div>
+    <textarea id="chat-history" rows="10" cols="80" readonly></textarea>
+    <form id="chat-form">
+      <input type="text" id="chat-input" placeholder="Type your message" required>
+      <button type="submit">Send</button>
+    </form>
+  </section>
+
+  <!-- Kali Terminal -->
+  <section>
+    <h2>Kali Terminal</h2>
+    <form id="terminal-form">
+      <input type="text" id="cmd-input" placeholder="Command to run on Kali" required>
+      <button type="submit">Execute Command</button>
+    </form>
+    <pre id="terminal-output"></pre>
+  </section>
+
+  <script>
+    // 1) VPN Form
+    const vpnForm = document.getElementById('vpn-form');
+    vpnForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(vpnForm);
+      const res = await fetch('/connect_vpn', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      document.getElementById('vpn-output').innerText = JSON.stringify(data, null, 2);
+    });
+
+    // 2) Populate Models
+    fetch('/get_models')
+      .then(res => res.json())
+      .then(data => {
+        const modelSelect = document.getElementById('model');
+        if (data.models) {
+          data.models.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m;
+            opt.text = m;
+            modelSelect.appendChild(opt);
+          });
+        }
+      });
+
+    // 3) Chat
+    const chatForm = document.getElementById('chat-form');
+    const chatHistory = document.getElementById('chat-history');
+    chatForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const userMsg = document.getElementById('chat-input').value;
+      const model = document.getElementById('model').value;
+
+      chatHistory.value += "You: " + userMsg + "\n";
+      document.getElementById('chat-input').value = "";
+
+      // Send chat request
+      const formData = new URLSearchParams();
+      formData.append('model', model);
+      formData.append('prompt', userMsg);
+
+      const res = await fetch('/chat', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.response) {
+        chatHistory.value += "AI: " + data.response + "\n";
+      } else {
+        chatHistory.value += "AI: [Error: " + data.error + "]\n";
+      }
+    });
+
+    // 4) Terminal
+    const terminalForm = document.getElementById('terminal-form');
+    const terminalOutput = document.getElementById('terminal-output');
+    terminalForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const cmd = document.getElementById('cmd-input').value;
+      const formData = new URLSearchParams();
+      formData.append('cmd', cmd);
+
+      terminalOutput.textContent += "$ " + cmd + "\n";
+      document.getElementById('cmd-input').value = "";
+
+      const res = await fetch('/execute_cmd', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+
+      if (data.output) {
+        terminalOutput.textContent += data.output + "\n";
+      }
+      if (data.error) {
+        terminalOutput.textContent += "ERROR: " + data.error + "\n";
+      }
+    });
+  </script>
+</body>
+</html>

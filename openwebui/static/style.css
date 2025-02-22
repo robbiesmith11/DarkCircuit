@@ -1,0 +1,21 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    background-color: #f0f0f0;
+  }
+  h1, h2 {
+    color: #333;
+  }
+  section {
+    background: #fff;
+    padding: 10px;
+    margin-bottom: 20px;
+    border-radius: 6px;
+  }
+  pre {
+    background: #000;
+    color: #0f0;
+    padding: 10px;
+    border-radius: 4px;
+  }
+  
