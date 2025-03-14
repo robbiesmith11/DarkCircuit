@@ -14,7 +14,7 @@ In your terminal, navigate to the `/modal_ollama_deployment` directory of this r
 Make sure your Modal environment is correctly configured. Install Modal CLI if you haven't:
 ```bash
 pip install modal
-modal login
+modal setup
 ```
 
 ### Step 3: Grab JWT Token from you OpenWebUI container
