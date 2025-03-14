@@ -4,8 +4,6 @@ This guide explains the steps to deploy an Ollama server on Modal using the prov
 
 ## Prerequisites
 - Modal account ([https://modal.com](https://modal.com))
-- Modal CLI installed and configured
-- Ollama API key (for secure access)
 
 ## Step-by-Step Deployment
 
