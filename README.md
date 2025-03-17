@@ -89,3 +89,14 @@ docker exec -it kali bash
 echo "root:kali" | chpasswd
 service ssh restart
 ```
+
+curl pull command
+```bash
+curl -X POST "<modal-server-link>/api/pull" \
+  -H "Authorization: Bearer <modal-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "<model-name>",
+    "stream": false
+  }' 
+```
