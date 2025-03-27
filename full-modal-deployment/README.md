@@ -41,7 +41,9 @@ modal deploy ollama_server.py
 
 ### Step 5: Create Environment File
 1. In the top left corner of your Modal dashboard, find your workspace name.
+
 ![In this example the workspace name is `brandontoews`.](modal_workspace.png)
+
 2. Insert name where it is indicated on each line in the command below:
 ```bash
 echo 'VITE_BACKEND_API_URL=https://<replace-with-workspace-name>--darkcircuit-app.modal.run
@@ -62,9 +64,11 @@ modal deploy darkcircuit_app.py
 
 ### Step 8: Connect to HackTheBox
 ![Click on connect using Pwnbox.](starting_point.png)
+
 1. Go to [HackTheBox](https://app.hackthebox.com/starting-point) platform, navigate to `Starting Point`, and select a challenge.
 
 ![Select `VIEW INSTANCE DETAILS` dropdown menu.](ssh_details.png)
+
 2. Click on `Connect using Pwnbox`, then click `START PWNBOX`, and select dropdown menu `VIEW INSTANCE DETAILS`.
 > [!WARNING]
 > The HTB Free Plan only provides 2 hrs of Pwnbox usage so be diligent about terminating the instance when you are finished using it.
@@ -73,7 +77,9 @@ modal deploy darkcircuit_app.py
 > You can receive **unlimited** Pwnbox usage with a [Student Subscription](https://help.hackthebox.com/en/articles/5720974-academy-subscriptions) at a discounted price of $8/month (USD). Details on how to obtain a Student Subscription are found [here](https://help.hackthebox.com/en/articles/7973133-getting-the-student-subscription).
 
 ![Confirm `INSTANCE LIFETIME` has started.](pwnbox_started.png)
+
 3. Once you see that the `INSTANCE LIFETIME` has started, copy and paste details from the Pwnbox instance into terminal connection window of the DarkCircuit app and click `Connect`.
+
 ![Paste Pwnbox details into SSH form on DarkCircuit.](connect_pwnbox.png)
 
 > [!CAUTION]
