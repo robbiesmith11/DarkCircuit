@@ -25,6 +25,15 @@ modal setup
 ```
 
 ### Step 3: Install Frontend Dependencies
+If not having js installed, install npm/node.js from https://nodejs.org/en -- > https://github.com/coreybutler/nvm-windows/releases
+```bash
+nvm install lts
+```
+Then use the latest version printed from the previous command:
+```bash
+nvm use <latest-version>
+```
+
 Install npm dependencies for frontend:
 ```bash
 cd frontend && npm install && cd ..
@@ -46,8 +55,10 @@ modal deploy ollama_server.py
 
 2. Insert name where it is indicated on each line in the command below:
 ```bash
-echo 'VITE_BACKEND_API_URL=https://<replace-with-workspace-name>--darkcircuit-app.modal.run
-VITE_TERMINAL_WS_URL=wss://<replace-with-workspace-name>--darkcircuit-app.modal.run' > frontend/.env
+echo 'VITE_BACKEND_API_URL=https://<replace-with-workspace-name>--darkcircuit-app.modal.run' > frontend/.env
+```
+```bash
+echo 'VITE_TERMINAL_WS_URL=wss://<replace-with-workspace-name>--darkcircuit-app.modal.run' >> frontend/.env
 ```
 
 ### Step 6: Build Frontend
@@ -59,7 +70,7 @@ cd frontend && npm run build && cd ..
 ### Step 7: Deploy DarkCircuit App
 Run the following command from your terminal to deploy your DarkCircuit app to Modal:
 ```bash
-modal deploy darkcircuit_app.py
+modal deploy darkcircuit_app_win.py
 ```
 
 ### Step 8: Connect to HackTheBox

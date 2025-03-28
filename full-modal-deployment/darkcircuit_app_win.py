@@ -1,16 +1,12 @@
 import modal
 from typing import List, Dict, Any, Generator, Optional
 import time
-import pty
 import subprocess
-import fcntl
-import select
 import asyncio
 import base64
 import tempfile
 import paramiko
 import os
-
 
 MINUTES = 60  # seconds
 
