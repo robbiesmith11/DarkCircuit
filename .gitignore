@@ -1,2 +1,12 @@
 .idea
 ollama/src/*
+__pycache__
+modal-docker-setup/.DS_Store
+modal-docker-setup/history/.zsh_history.LOCK
+modal-docker-setup/streamlit/.streamlit/*
+.DS_Store
+
+full-modal-deployment/node_modules
+full-modal-deployment/frontend/.env
+full-modal-deployment/frontend/dist
+full-modal-deployment/frontend/node_modules

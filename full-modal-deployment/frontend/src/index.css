@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.xterm {
+  height: 100% !important;
+  padding: 8px;
+}
+
+.xterm-viewport {
+  overflow-y: auto !important;
+}
+
+.xterm-screen {
+  margin: 0 auto;
+}
+
+.terminal-container {
+  min-height: 400px;
+  height: 60%;
+  max-height: 500px; /* Add this line; adjust the value as needed */
+  overflow-y: auto;  /* Add this to enable scrolling if content overflows */
+  position: relative;
+}
+
+/* Fix for terminal rendering */
+.xterm .xterm-screen {
+  position: relative;
+}
+
+.xterm .xterm-viewport {
+  position: absolute;
+  right: 0;
+  left: 0;
+  top: 0;
+  bottom: 0;
+}
+
+.chat-container {
+  max-height: 500px; /* Adjust this value to fit your design */
+  overflow-y: auto;  /* Enables scrolling if content exceeds max height */
+}

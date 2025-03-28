@@ -10,7 +10,14 @@ from datetime import datetime
 import html
 
 # Environment variables
-OLLAMA_API = os.environ.get("OLLAMA_API_URL", "http://ollama:11434")
+OLLAMA_API = st.secrets.get("OLLAMA_API_URL", "http://ollama:11434")
+OLLAMA_API_KEY = st.secrets.get("OLLAMA_API_KEY", "")
+
+headers = {
+    "Authorization": f"Bearer {OLLAMA_API_KEY}",
+    "Content-Type": "application/json",
+}
+
 KALI_SSH_HOST = os.environ.get("KALI_SSH_HOST", "offensive-docker")
 KALI_SSH_PORT = 22
 KALI_SSH_USER = os.environ.get("KALI_SSH_USER", "root")
@@ -57,11 +64,23 @@ st.markdown("""
         overflow-y: auto;
         white-space: pre-wrap;
     }
-    .chat-container {
-        display: flex;
-        flex-direction: column;
-        height: 500px; /* Same height as terminal */
-        overflow-y: auto; /* Enable scrolling */
+    .chat-window {
+    background-color: #262730; /* Dark greyish background */
+    color: #E0E0E0; /* Light, readable text */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    padding: 10px;
+    border-radius: 8px;
+    height: 500px; /* Same height as terminal */
+    overflow-y: auto; /* Enable scrolling */
+    white-space: pre-wrap;
+    }
+    .user-msg {
+        text-align: right;
+        margin-bottom: 12px;
+    }
+    .assistant-msg {
+        text-align: left;
+        margin-bottom: 12px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -179,7 +198,7 @@ with st.sidebar:
 # Fetch available models only once
 if "available_models" not in st.session_state:
     try:
-        response = requests.get(f"{OLLAMA_API}/api/tags")
+        response = requests.get(f"{OLLAMA_API}/api/tags", headers=headers)
         st.session_state.available_models = [model["name"] for model in response.json().get("models", [])]
     except Exception as e:
         st.session_state.available_models = ["No models available"]
@@ -211,10 +230,15 @@ with col1:
     chat_html = ""
     for message in st.session_state.chat_history:
         if message["role"] == "user":
-            chat_html += f"<div style='text-align: right; margin-bottom: 10px;'>👤 <b>User:</b> {message['content']}</div>"
+            chat_html += f"<div class='assistant-msg'>👤 <b>User:</b> {message['content']}</div>"
         elif message["role"] == "assistant":
-            chat_html += f"<div style='text-align: left; margin-bottom: 10px;'>🤖 <b>Assistant:</b> {message['content']}</div>"
-    st.markdown(f'<div class="chat-container auto-scroll">{chat_html}</div>', unsafe_allow_html=True)
+            chat_html += f"<div class='assistant-msg'>🤖 <b>Assistant:</b> {message['content']}</div>"
+
+    st.markdown(f'''
+    <div class="chat-window">
+        {chat_html}
+    </div>
+    ''', unsafe_allow_html=True)
 
     # Handle new prompt with streaming
     prompt = st.chat_input("Ask me about security tools, techniques or concepts...")
@@ -224,30 +248,29 @@ with col1:
             try:
                 response = requests.post(
                     f"{OLLAMA_API}/api/generate",
+                    headers=headers,
                     json={"model": st.session_state.selected_model, "prompt": prompt, "stream": True},
                     stream=True
                 )
+                response.raise_for_status()
+
                 full_response = ""
                 response_placeholder = st.empty()
-                for line in response.iter_lines():
-                    if line:
-                        data = json.loads(line.decode("utf-8"))
-                        chunk = data.get("response", "")
-                        full_response += chunk
+
+                for chunk in response.iter_content(chunk_size=1024):
+                    if chunk:
+                        text_chunk = chunk.decode("utf-8")
+                        full_response += text_chunk
                         response_placeholder.markdown(f"🤖 **Assistant:** {full_response}")
-                        time.sleep(0.05)  # Small delay for UI update
+                        time.sleep(0.02)  # smooth rendering
+
                 st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+
+            except requests.exceptions.HTTPError as e:
+                st.error(f"HTTP Error: {e}\nResponse: {response.text}")
             except Exception as e:
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": f"Error: {str(e)}"
-                })
-        else:
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": "No model available. Check Ollama service."
-            })
-        st.rerun()
+                st.error(f"Unexpected Error: {e}")
+            st.rerun()
 
 # Terminal Interface (Right Column)
 with col2:
