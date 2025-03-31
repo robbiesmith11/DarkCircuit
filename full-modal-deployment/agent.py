@@ -7,8 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 
 # Set OpenAI API key - you should store this securely in production
-os.environ["OPENAI_API_KEY"] = "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"
-
+#os.environ["OPENAI_API_KEY"] =
 llm = ChatOpenAI(model="gpt-3.5-turbo")
 search = DuckDuckGoSearchRun()
 tools = [search]
