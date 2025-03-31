@@ -1,2 +1,6 @@
 modal
 paramiko
+langchain_openai
+langchain_community
+langgraph
+langchain_core

@@ -9,7 +9,6 @@ export const ChatContainer = () => {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
-  // Removed unused isLoading state
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Fetch models from the API
@@ -19,14 +18,10 @@ export const ChatContainer = () => {
       if (!res.ok) {
         throw new Error(`HTTP error ${res.status}`);
       }
-
       const data = await res.json();
       console.log('Fetched models:', data);
-
       if (data.models && data.models.length > 0) {
         setModels(data.models);
-
-        // Only set selected model if it's not already set or if current selection is no longer available
         if (!selectedModel || !data.models.some((model: Model) => model.model === selectedModel)) {
           setSelectedModel(data.models[0].model);
           console.log('Selected Model:', data.models[0].model);
@@ -44,8 +39,6 @@ export const ChatContainer = () => {
   useEffect(() => {
     console.log('ChatContainer mounted');
     fetchModels();
-
-    // Clean up function
     return () => {
       console.log('ChatContainer unmounted');
       if (abortControllerRef.current) {
@@ -61,147 +54,87 @@ export const ChatContainer = () => {
       abortControllerRef.current.abort();
     }
 
+    // Add the user's message to the chat history
     const userMessage: ChatMessage = { role: 'user', content: message };
     setChatHistory((prev) => [...prev, userMessage]);
 
-    // Create messages array for API request
-    const messages = [...chatHistory, userMessage].map(msg => ({
-      role: msg.role,
-      content: msg.content
-    }));
-
     // Create a placeholder for the assistant's response
-    setChatHistory((prev) => [...prev, {
-      role: 'assistant',
-      content: ''
-    }]);
+    setChatHistory((prev) => [...prev, { role: 'assistant', content: '' }]);
 
     // Create a new AbortController for this request
     abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
 
-    // Create the fetch request for SSE
+    // Make a POST request to /api/chat/completions with a messages array
     fetch(`${BACKEND_API}/api/chat/completions`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: selectedModel,
-        messages: messages
+        messages: [{ role: 'user', content: message }]
       }),
-      signal
-    }).then(response => {
-      if (!response.body) {
-        throw new Error('ReadableStream not supported in this browser.');
-      }
+      signal: abortControllerRef.current.signal
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(`HTTP error! Status: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        if (!data.success) {
+          throw new Error(data.error || 'Agent returned an error.');
+        }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      let buffer = '';
-
-      function processChunks(): Promise<void> {
-        return reader.read().then(({ done, value }) => {
-          if (done) {
-            console.log('Stream complete');
-            return;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-
-          // Process buffer content
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || ''; // Keep the last incomplete chunk in the buffer
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              let data = line.slice(6); // Remove 'data: ' prefix
-
-              if (data === '[DONE]') {
-                console.log('Stream finished');
-                continue;
-              }
-
-              try {
-                const parsed = JSON.parse(data);
-
-                // Extract the content from the chunk
-                const content = parsed.choices[0].delta.content || '';
-
-                // Update the last assistant message
-                setChatHistory(prev => {
-                  const newHistory = [...prev];
-                  const lastMessageIndex = newHistory.length - 1;
-
-                  if (lastMessageIndex >= 0 && newHistory[lastMessageIndex].role === 'assistant') {
-                    newHistory[lastMessageIndex] = {
-                      ...newHistory[lastMessageIndex],
-                      content: newHistory[lastMessageIndex].content + content
-                    };
-                  }
-
-                  return newHistory;
-                });
-              } catch (error) {
-                console.error('Error parsing SSE data:', error, data);
-              }
-            }
-          }
-
-          return processChunks();
-        }).catch(error => {
-          if (error.name === 'AbortError') {
-            console.log('Fetch aborted');
-          } else {
-            console.error('Error processing stream:', error);
-          }
-        });
-      }
-
-      return processChunks();
-    }).catch(error => {
-      if (error.name === 'AbortError') {
-        console.log('Fetch aborted');
-      } else {
-        console.error('Error with streaming:', error);
-        setChatHistory(prev => {
+        // data.messages is the array of { role, content }
+        const agentMessages = data.messages || [];
+        console.log("agentMessages array:", agentMessages);
+        // Overwrite the placeholder assistant message with the agent's response
+        setChatHistory((prev) => {
           const newHistory = [...prev];
-          const lastMessageIndex = newHistory.length - 1;
-
-          if (lastMessageIndex >= 0 && newHistory[lastMessageIndex].role === 'assistant') {
-            newHistory[lastMessageIndex] = {
-              ...newHistory[lastMessageIndex],
-              content: 'Error: Could not connect to the chat service. Please try again later.'
+          const lastIndex = newHistory.findIndex(
+            (msg, i) => msg.role === 'assistant' && i === newHistory.length - 1
+          );
+          if (lastIndex !== -1 && agentMessages.length > 0) {
+            newHistory[lastIndex] = {
+              ...newHistory[lastIndex],
+              content: agentMessages.map((m: ChatMessage) => m.content).join('\n')
             };
           }
-
           return newHistory;
         });
-      }
-    });
+      })
+      .catch((error) => {
+        console.error('Error with /api/chat/completions call:', error);
+        setChatHistory((prev) => {
+          const newHistory = [...prev];
+          const lastIndex = newHistory.findIndex(
+            (msg, i) => msg.role === 'assistant' && i === newHistory.length - 1
+          );
+          if (lastIndex !== -1) {
+            newHistory[lastIndex] = {
+              ...newHistory[lastIndex],
+              content: `Error: ${error.message}`
+            };
+          }
+          return newHistory;
+        });
+      });
   };
 
   // Handle model deletion with proper error handling and UI feedback
   const handleModelDelete = async (model: string): Promise<void> => {
     if (!model) return;
-
-    // Starting deletion process
     try {
       const res = await fetch(`${BACKEND_API}/api/models/${model}`, {
         method: 'DELETE'
       });
-
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.error || `Failed with status: ${res.status}`);
       }
-
       const result = await res.json();
-
       if (result.success) {
         toast.success(`Model ${model} deleted successfully`);
-        // Refresh the models list
         await fetchModels();
       } else {
         throw new Error(result.error || 'Unknown error occurred');
@@ -215,25 +148,19 @@ export const ChatContainer = () => {
   // Handle model pull with proper error handling and UI feedback
   const handleModelPull = async (model: string): Promise<void> => {
     if (!model) throw new Error('No model specified');
-
-    // Starting pull process
     try {
       const res = await fetch(`${BACKEND_API}/api/models/pull`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model })
       });
-
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.error || `Failed with status: ${res.status}`);
       }
-
       const result = await res.json();
-
       if (result.success) {
         toast.success(`Model ${model} pulled successfully`);
-        // Refresh the models list
         await fetchModels();
         return;
       } else {

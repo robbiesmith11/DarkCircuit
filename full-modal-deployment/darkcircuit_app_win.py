@@ -8,12 +8,14 @@ import tempfile
 import paramiko
 import os
 
+from fastapi import Request
+from agent import run_agent
+
 MINUTES = 60  # seconds
 
 app_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("fastapi[standard]", "httpx", "paramiko", "ollama", "langchain", "sseclient-py")
-)
+    .pip_install("fastapi[standard]", "httpx", "paramiko",  "ollama","langchain","sseclient-py","langchain_community","langgraph","langchain_core", "langchain_openai", "duckduckgo-search==7.5.5"))
 
 app = modal.App("DarkCircuit")
 
@@ -333,60 +335,23 @@ def App():
     @fastapi_app.post("/api/chat/completions")
     async def chat_completions(request: ChatRequest):
         """
-        REST API endpoint for chat completions with streaming.
-        Compatible with OpenAI-style API for LangGraph integration.
+        REST API endpoint for chat completions using the agent script.
+        This endpoint now uses run_agent to process the user’s prompt.
         """
-        # Convert to format expected by Ollama
-        ollama_messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in request.messages
-        ]
+        # Extract the last user message as the prompt.
+        prompt = ""
+        for msg in reversed(request.messages):
+            if msg.role == "user":
+                prompt = msg.content
+                break
 
-        # Use the async streaming method
-        # Streaming response generator
-        async def generate_stream():
-            for chunk in ollama_server.chat.remote_gen(request.model, ollama_messages):
-                # Format each chunk as an SSE event in OpenAI format
-                data = {
-                    "id": f"chatcmpl-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": request.model,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {
-                                "content": chunk,
-                            },
-                            "finish_reason": None
-                        }
-                    ]
-                }
-                yield f"data: {json.dumps(data)}\n\n"
+        if not prompt:
+            return {"success": False, "error": "Prompt is required."}
 
-            # Final chunk with finish_reason
-            data = {
-                "id": f"chatcmpl-{int(time.time())}",
-                "object": "chat.completion.chunk",
-                "created": int(time.time()),
-                "model": request.model,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop"
-                    }
-                ]
-            }
-            yield f"data: {json.dumps(data)}\n\n"
-            yield "data: [DONE]\n\n"
+        # Call your agent script instead of using Ollama chat.
+        result = run_agent(prompt)
+        messages_out = [{"role": msg["role"], "content": msg["content"]} for msg in result["messages"]]
 
-        return StreamingResponse(
-            generate_stream(),
-            media_type="text/event-stream"
-        )
-
-    # Static files
-    fastapi_app.mount("/", StaticFiles(directory="/assets", html=True), name="frontend")
+        return {"success": True, "messages": messages_out}
 
     return fastapi_app
