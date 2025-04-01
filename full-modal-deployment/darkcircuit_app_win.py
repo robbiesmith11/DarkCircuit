@@ -348,7 +348,7 @@ def App():
         if not prompt:
             return {"success": False, "error": "Prompt is required."}
 
-        # Call your agent script instead of using Ollama chat.
+        # Call agent script instead of using Ollama chat.
         result = run_agent(prompt)
         messages_out = [{"role": msg["role"], "content": msg["content"]} for msg in result["messages"]]
 

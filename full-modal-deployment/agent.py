@@ -6,14 +6,13 @@ from langgraph.prebuilt import tools_condition, ToolNode
 from langchain_core.messages import HumanMessage, SystemMessage
 
 
-# Set OpenAI API key - you should store this securely in production
-#os.environ["OPENAI_API_KEY"] =
+os.environ["OPENAI_API_KEY"] = "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"
 llm = ChatOpenAI(model="gpt-3.5-turbo")
 search = DuckDuckGoSearchRun()
 tools = [search]
 llm_with_tools = llm.bind_tools(tools)
 
-# Define the system message for context
+
 system_message = SystemMessage(
     content="You are an AI assistant tasked with helping answer users' questions. You can use tools like search to find information on the web."
 )
