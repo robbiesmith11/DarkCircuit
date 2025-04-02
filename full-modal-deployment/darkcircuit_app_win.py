@@ -10,6 +10,7 @@ import os
 
 from fastapi import Request
 from agent import run_agent
+from darkcircuit_agent import DarkCircuitAgent
 
 MINUTES = 60  # seconds
 
@@ -350,6 +351,10 @@ def App():
 
         # Call agent script instead of using Ollama chat.
         agent_response = run_agent(prompt)
+
+        # Create DarkCircuit agent with connection to SSH session:
+        # agent = Darkcircuit_Agent(ssh_state["client"])
+        # agent_response = agent.run_agent(prompt)
 
         # Prepare response for OpenAI-style client
         async def generate_stream():
