@@ -1,5 +1,6 @@
 import modal
 from typing import List, Dict, Any, Generator, Optional
+from glob import glob
 import time
 import subprocess
 import asyncio
@@ -8,11 +9,18 @@ import tempfile
 import paramiko
 import os
 
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import FastEmbedEmbeddings
+
 MINUTES = 60  # seconds
 
 app_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("fastapi[standard]", "httpx", "paramiko", "ollama", "langchain", "sseclient-py")
+    .pip_install("fastapi[standard]", "httpx", "paramiko", "ollama", "langchain", "sseclient-py", "langchain-community", "faiss-cpu", "pypdf", "fastembed")
+    .add_local_dir("docs", remote_path="/docs")
+
 )
 
 app = modal.App("DarkCircuit")
@@ -26,6 +34,8 @@ ssh_state = {
     "running": False
 }
 
+# Load and process the static PDF for context
+_cached_retriever = None  # cached once per container instance
 
 def setup_ssh_connection(host: str, port: int, username: str, password: Optional[str] = None,
                          key_path: Optional[str] = None) -> Dict[str, Any]:
@@ -87,6 +97,40 @@ def close_ssh_connection():
     ssh_state["connected"] = False
     ssh_state["error"] = None
 
+def load_static_rag_context():
+    global _cached_retriever
+    if _cached_retriever:
+        return _cached_retriever
+
+    docs_path = "/docs/"
+    pdf_files = glob(os.path.join(docs_path, "*.pdf"))
+
+    if not pdf_files:
+        raise FileNotFoundError("❌ No PDFs found in /docs")
+
+    all_documents = []
+
+    # Load and split each PDF
+    for pdf in pdf_files:
+        print(f"📄 Loading: {pdf}")
+        loader = PyPDFLoader(pdf)
+        pages = loader.load_and_split()
+
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=100, add_start_index=True)
+        chunks = splitter.split_documents(pages)
+
+        # Add source info to metadata
+        for chunk in chunks:
+            chunk.metadata["source"] = os.path.basename(pdf)
+
+        all_documents.extend(chunks)
+
+    # Embed and build FAISS
+    embeddings = FastEmbedEmbeddings()
+    vectorstore = FAISS.from_documents(all_documents, embeddings)
+
+    _cached_retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+    return _cached_retriever
 
 # FastAPI private backend server
 @app.function(
@@ -118,6 +162,7 @@ def App():
     class ChatRequest(BaseModel):
         model: str
         messages: List[ChatMessage]
+        use_rag: Optional[bool] = True
 
     class ModelPullRequest(BaseModel):
         model: str
@@ -135,6 +180,7 @@ def App():
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
 
     # FastAPI WebSocket endpoint for terminal with proper PTY handling
     @fastapi_app.websocket("/ws/ssh-terminal")
@@ -337,10 +383,35 @@ def App():
         Compatible with OpenAI-style API for LangGraph integration.
         """
         # Convert to format expected by Ollama
-        ollama_messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in request.messages
-        ]
+        ollama_messages = []
+
+        if request.use_rag:
+            retriever = load_static_rag_context()
+            user_question = request.messages[-1].content
+
+            docs = retriever.get_relevant_documents(user_question)
+            context_parts = []
+            for i, doc in enumerate(docs):
+                metadata = doc.metadata
+                source_info = f"[Source {i + 1} | Page {metadata.get('page', 'unknown')}]"
+                context_parts.append(f"{source_info}\n{doc.page_content}")
+
+            context = "\n\n".join(context_parts)
+
+            final_prompt = (
+                f"You are DarkCircuit Model, a highly skilled black-hat hacker specializing in exploitation and penetration testing.\n\n"
+                f"Context:\n{context}\n\n"
+                f"Question:\n{user_question}\n\n"
+                f"Answer:"
+            )
+
+            ollama_messages.append({"role": "user", "content": final_prompt})
+
+        else:
+            ollama_messages = [
+                {"role": msg.role, "content": msg.content}
+                for msg in request.messages
+            ]
 
         # Use the async streaming method
         # Streaming response generator
