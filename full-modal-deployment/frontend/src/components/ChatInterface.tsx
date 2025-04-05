@@ -92,7 +92,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   return (
       <div className="flex flex-col max-h-[80vh] bg-gray-900 rounded-lg overflow-hidden">
-        <div className="p-4 bg-gray-800 border-b border-gray-700">
+        <div className="p-4 bg-black border-b border-cyan">
           <div className="flex flex-col space-y-2">
             <div className="flex space-x-2 items-center">
               <input
@@ -133,7 +133,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
         </div>
 
-        <div className="p-4 bg-gray-800 flex items-center justify-between border-b border-gray-700">
+        <div className="p-4 bg-black flex items-center justify-between border-b border-cyan">
           <div className="flex items-center flex-1">
             <select
                 value={selectedModel}
@@ -205,7 +205,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           )}
           <div ref={chatEndRef}/>
         </div>
-        <form onSubmit={handleSubmit} className="p-4 bg-gray-800">
+        <form onSubmit={handleSubmit} className="p-4 bg-black">
           <div className="flex space-x-2">
             <input
                 type="text"
