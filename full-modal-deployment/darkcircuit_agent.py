@@ -13,6 +13,7 @@ class Darkcircuit_Agent:
         # Set OpenAI API key
         os.environ[
             "OPENAI_API_KEY"] = "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"
+            "OPENAI_API_KEY"] = "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"
 
         # Initialize LLM
         self.llm = ChatOpenAI(model="gpt-3.5-turbo")

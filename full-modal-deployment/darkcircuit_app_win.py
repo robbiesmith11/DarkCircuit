@@ -10,7 +10,7 @@ import os
 
 from fastapi import Request
 from agent import run_agent
-from darkcircuit_agent import DarkCircuitAgent
+from darkcircuit_agent import Darkcircuit_Agent
 
 MINUTES = 60  # seconds
 
@@ -94,7 +94,9 @@ def close_ssh_connection():
 # FastAPI private backend server
 @app.function(
     image=app_image.add_local_dir("frontend/dist", remote_path="/assets"),
-    scaledown_window=15 * MINUTES
+    scaledown_window=15 * MINUTES,
+    min_containers=1,
+    max_containers=1
 )
 @modal.asgi_app()
 def App():
@@ -350,11 +352,11 @@ def App():
             return {"success": False, "error": "Prompt is required."}
 
         # Call agent script instead of using Ollama chat.
-        agent_response = run_agent(prompt)
+        #agent_response = run_agent(prompt)
 
         # Create DarkCircuit agent with connection to SSH session:
-        # agent = Darkcircuit_Agent(ssh_state["client"])
-        # agent_response = agent.run_agent(prompt)
+        agent = Darkcircuit_Agent(ssh_state["client"])
+        agent_response = agent.run_agent(prompt)
 
         # Prepare response for OpenAI-style client
         async def generate_stream():

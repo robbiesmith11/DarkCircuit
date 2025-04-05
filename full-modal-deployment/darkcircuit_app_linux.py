@@ -21,6 +21,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 from agent import run_agent
+from darkcircuit_agent import Darkcircuit_Agent
 
 
 MINUTES = 60  # seconds
@@ -404,7 +405,9 @@ def App():
         prompt = request.messages[-1].content  # Take the latest user message as prompt
 
         # Run the LangGraph agent with the custom chat model
-        agent_response = run_agent(prompt)
+        #agent_response = run_agent(prompt)
+        agent = Darkcircuit_Agent(ssh_state["client"])
+        agent_response = agent.run_agent(prompt)
 
         # Prepare response for OpenAI-style client
         async def generate_stream():

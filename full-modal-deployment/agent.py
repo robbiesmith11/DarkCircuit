@@ -6,7 +6,7 @@ from langgraph.prebuilt import tools_condition, ToolNode
 from langchain_core.messages import HumanMessage, SystemMessage
 
 
-os.environ["OPENAI_API_KEY"] = "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"
+os.environ["OPENAI_API_KEY"] = "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"
 llm = ChatOpenAI(model="gpt-3.5-turbo")
 search = DuckDuckGoSearchRun()
 tools = [search]
