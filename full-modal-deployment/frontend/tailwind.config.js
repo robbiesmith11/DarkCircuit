@@ -3,6 +3,9 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      fontFamily: { 
+        MonomaniacOne: ['"MonomaniacOne"', 'sans-serif'],
+      },
       colors: {
         cyan: '#00FFF0',
         bgCyan: '#00ced1',
