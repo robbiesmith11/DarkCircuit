@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Trash2, Download } from 'lucide-react';
+import { Trash2, Download, ArrowUp } from 'lucide-react';
 import { ChatMessage, Model } from '../types';
 
 interface ChatInterfaceProps {
@@ -171,13 +171,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               )}
             </button>
           </div>
-          <button
-              onClick={onClearChat}
-              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center ml-2"
-          >
-            <Trash2 className="mr-2" size={18}/>
-            Clear Chat
-          </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4 chat-container">
           {chatHistory.length > 0 ? (
@@ -204,26 +197,35 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               </div>
           )}
           <div ref={chatEndRef}/>
+            <form onSubmit={handleSubmit} className="p-4">
+            <div className="flex space-x-2">
+              <div className="relative flex-1">
+                <input
+            type="text"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="Ask about security tools, techniques or concepts..."
+            className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 pr-12"
+                />
+                <button
+            type="submit"
+            className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-cyan hover:bg-bgCyan hover:text-white text-black w-8 h-8 rounded-full flex items-center justify-center"
+            disabled={!message.trim()}
+                >
+            <ArrowUp size={18} />
+                </button>
+              </div>
+              <button
+                onClick={onClearChat}
+                className="bg-red-600 hover:bg-white hover:text-red-600 text-white w-10 h-10 rounded-full flex items-center justify-center"
+                aria-label="Clear chat"
+                title="Clear chat"
+              >
+                <Trash2 className="" size={18} />
+              </button>
+            </div>
+          </form>
         </div>
-        <form onSubmit={handleSubmit} className="p-4 bg-black">
-          <div className="flex space-x-2">
-            <input
-                type="text"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Ask about security tools, techniques or concepts..."
-                className="flex-1 bg-gray-700 text-white rounded-lg px-4 py-2"
-            />
-            <button
-                type="submit"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center"
-                disabled={!message.trim()}
-            >
-              <Send className="mr-2" size={18}/>
-              Send
-            </button>
-          </div>
-        </form>
       </div>
   );
 };

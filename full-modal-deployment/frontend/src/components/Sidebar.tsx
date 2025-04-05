@@ -15,7 +15,7 @@ export const Sidebar: React.FC<SimplifiedSidebarProps> = ({
 
   return (
     <div className="w-64 text-white p-4 flex flex-col h-screen border-r border-cyan">
-      <h1 className="text-2xl font-bold text-cyan mb-24">AI Cyber Labs</h1>
+        <h1 className="text-3xl text-cyan mb-24 font-MonomaniacOne select-none">AI Cyber Labs</h1>
 
       <div className="mb-8 border border-cyan rounded-lg p-3">
         <h2 className="text-xl font-semibold mb-4">Connect to External Container</h2>
