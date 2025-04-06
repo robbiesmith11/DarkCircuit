@@ -91,8 +91,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   }, [pullStatus]);
 
   return (
-      <div className="flex flex-col max-h-[80vh] bg-gray-900 rounded-lg overflow-hidden">
-        <div className="p-4 bg-black border-b border-cyan">
+      <div className="flex flex-col max-h-[100vh] bg-black rounded-lg overflow-hidden">
+        <div className="p-4 bg-black border border-cyan rounded-lg">
           <div className="flex flex-col space-y-2">
             <div className="flex space-x-2 items-center">
               <input
@@ -133,7 +133,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
         </div>
 
-        <div className="p-4 bg-black flex items-center justify-between border-b border-cyan">
+        <div className="p-4 bg-black flex items-center justify-between border border-cyan rounded-lg mt-4">
           <div className="flex items-center flex-1">
             <select
                 value={selectedModel}
@@ -172,7 +172,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 chat-container">
+        <div className="bg-gray-900 flex- overflow-y-auto p-4 space-y-4 chat-container mt-10 rounded-lg border border-cyan">
           {chatHistory.length > 0 ? (
               chatHistory.map((msg, index) => (
                   <div
@@ -181,7 +181,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   >
                     <div
                         className={`max-w-[80%] rounded-lg p-3 ${
-                            msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-white'
+                            msg.role === 'user' ? 'bg-bgCyan text-black' : 'bg-gray-700 text-bgCyan'
                         }`}
                     >
                       <p className="text-sm font-semibold mb-1">
