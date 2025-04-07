@@ -3,20 +3,58 @@ from langchain_openai import ChatOpenAI
 from langchain_community.tools import DuckDuckGoSearchRun
 from langgraph.graph import MessagesState, START, StateGraph
 from langgraph.prebuilt import tools_condition, ToolNode
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
+from langchain_core.callbacks.base import BaseCallbackHandler
+import asyncio
 import paramiko
+
+
+class StreamingHandler(BaseCallbackHandler):
+    def __init__(self):
+        self.queue = asyncio.Queue()
+
+    async def on_llm_new_token(self, token: str, **kwargs):
+        await self.queue.put({"type": "token", "value": token})
+
+    async def on_tool_start(self, tool, input_str, **kwargs):
+        await self.queue.put({
+            "type": "tool_call",
+            "name": tool.name if hasattr(tool, "name") else str(tool),
+            "input": input_str
+        })
+
+    async def on_tool_end(self, output, **kwargs):
+        if isinstance(output, ToolMessage):
+            output = {
+                "tool_call_id": output.tool_call_id,
+                "content": output.content
+            }
+        await self.queue.put({
+            "type": "tool_result",
+            "output": output
+        })
+
+    async def stream(self):
+        while True:
+            item = await self.queue.get()
+            if item == "__END__":
+                break
+            yield item
+
+    async def end(self):
+        await self.queue.put("__END__")
+
 
 
 class Darkcircuit_Agent:
     def __init__(self, client=None, **kwargs):
         # Set OpenAI API key
         os.environ[
-            "OPENAI_API_KEY"] = "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"
-            "OPENAI_API_KEY"] = "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"
+            "OPENAI_API_KEY"] = <replace with your OpenAI API key>
 
         # Initialize LLM
-        self.llm = ChatOpenAI(model="gpt-3.5-turbo")
+        self.llm = ChatOpenAI(model="gpt-4o-mini", streaming=True)
 
         # Initialize SSH client
         self.ssh_client = client
@@ -24,7 +62,6 @@ class Darkcircuit_Agent:
         # Define tools
         self.search = DuckDuckGoSearchRun()
 
-        # Define the run_command tool
         @tool
         def run_command(command: str) -> str:
             """Execute a command on the remote SSH server"""
@@ -44,20 +81,21 @@ class Darkcircuit_Agent:
 
         self.run_command = run_command
         self.tools = [self.search, self.run_command]
-
-        # Bind tools to LLM
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
-        # Create system message
         self.system_message = SystemMessage(
             content="You are an AI assistant tasked with helping answer users' questions. You can use tools like search to find information on the web, and run commands on a remote server if connected."
         )
 
-        # Define the reasoning function
-        def reasoner(state: MessagesState):
-            return {"messages": [self.llm_with_tools.invoke([self.system_message] + state["messages"])]}
+        # ✅ ASYNC reasoner function with proper streaming
+        async def reasoner(state: MessagesState):
+            response = await self.llm_with_tools.ainvoke(
+                [self.system_message] + state["messages"],
+                config={"callbacks": [self.streaming_handler]} if self.streaming_handler else None
+            )
+            return {"messages": [response]}
 
-        # Build the reactive graph
+        # Build the LangGraph
         builder = StateGraph(MessagesState)
         builder.add_node("reasoner", reasoner)
         builder.add_node("tools", ToolNode(self.tools))
@@ -67,33 +105,45 @@ class Darkcircuit_Agent:
         self.react_graph = builder.compile()
 
     def run_agent(self, prompt: str) -> dict:
-        """
-        Process a prompt using the agent and return a dictionary with a 'messages'
-        key containing a list of message dictionaries with 'role' and 'content'.
-        """
-        # Create input as a HumanMessage
         input_messages = [HumanMessage(content=prompt)]
         output_state = self.react_graph.invoke({"messages": input_messages})
-
-        # Convert each message object to a dict
         messages = [{"role": "assistant", "content": msg.content} for msg in output_state["messages"]]
-
         return {"messages": messages}
 
+    async def run_agent_streaming(self, prompt: str):
+        input_messages = [HumanMessage(content=prompt)]
+        handler = StreamingHandler()
+        self.streaming_handler = handler
+
+        final_output = {}
+
+        async def run_graph():
+            nonlocal final_output
+            final_output = await self.react_graph.ainvoke(
+                {"messages": input_messages},
+                config={"callbacks": [handler]}
+            )
+            await handler.end()
+
+        # Start graph and stream simultaneously
+        graph_task = asyncio.create_task(run_graph())
+        async for event in handler.stream():
+            yield event
+        await graph_task  # wait for graph to complete
+
+        # If LLM responded after tools, yield that too
+        final_messages = final_output.get("messages", [])
+        final_msg = next((m for m in reversed(final_messages) if m.type == "ai"), None)
+        if final_msg:
+            yield {"type": "token", "value": final_msg.content}
+
     def __del__(self):
-        """Close SSH connection when the object is destroyed"""
         if self.ssh_client:
             self.ssh_client.close()
 
 
-# Example usage
+# Manual test (non-streaming)
 if __name__ == "__main__":
-    # Create agent with or without SSH connection
-    # Without SSH:
     agent = Darkcircuit_Agent()
-
-    # With SSH:
-    # agent = Darkcircuit_Agent(ssh_state["client"])
-
     result = agent.run_agent("What's the weather in New York today?")
     print(result["messages"])

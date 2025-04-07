@@ -20,7 +20,7 @@ from typing import List, Optional, Any, Union
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from agent import run_agent
+#from agent import run_agent
 from darkcircuit_agent import Darkcircuit_Agent
 
 
@@ -29,7 +29,8 @@ MINUTES = 60  # seconds
 app_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("fastapi[standard]", "httpx", "paramiko", "ollama", "langchain", "sseclient-py", "langchain_community", "langgraph", "langchain_core", "langchain_openai", "duckduckgo-search==7.5.5")
-    .add_local_python_source("agent")
+    #.add_local_python_source("agent")
+    .add_local_python_source("darkcircuit_agent")
 )
 
 app = modal.App("DarkCircuit")
@@ -407,28 +408,31 @@ def App():
         # Run the LangGraph agent with the custom chat model
         #agent_response = run_agent(prompt)
         agent = Darkcircuit_Agent(ssh_state["client"])
-        agent_response = agent.run_agent(prompt)
 
-        # Prepare response for OpenAI-style client
         async def generate_stream():
-            # First, send individual messages
-            for msg in agent_response["messages"]:
-                data = {
-                    "id": f"chatcmpl-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": request.model,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": msg["content"], "role": "assistant"},
-                            "finish_reason": None
-                        }
-                    ]
-                }
-                yield f"data: {json.dumps(data)}\n\n"
+            async for event in agent.run_agent_streaming(prompt):
+                if event["type"] == "token":
+                    token = event["value"]
+                    data = {
+                        "id": f"chatcmpl-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": request.model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": token, "role": "assistant"},
+                                "finish_reason": None
+                            }
+                        ]
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
+                elif event["type"] == "tool_call":
+                    yield f"data: {json.dumps({'tool_call': event})}\n\n"
+                elif event["type"] == "tool_result":
+                    yield f"data: {json.dumps({'tool_result': event})}\n\n"
 
-            # Send a final chunk indicating completion
+            # Final stop chunk
             data = {
                 "id": f"chatcmpl-{int(time.time())}",
                 "object": "chat.completion.chunk",

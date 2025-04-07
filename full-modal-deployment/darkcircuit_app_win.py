@@ -338,46 +338,40 @@ def App():
     @fastapi_app.post("/api/chat/completions")
     async def chat_completions(request: ChatRequest):
         """
-        REST API endpoint for chat completions using the agent script.
-        This endpoint now uses run_agent to process the user’s prompt.
+        REST API endpoint for chat completions with streaming.
+        Compatible with OpenAI-style API for LangGraph integration.
         """
-        # Extract the last user message as the prompt.
-        prompt = ""
-        for msg in reversed(request.messages):
-            if msg.role == "user":
-                prompt = msg.content
-                break
+        # Convert to format expected by Ollama
+        prompt = request.messages[-1].content  # Take the latest user message as prompt
 
-        if not prompt:
-            return {"success": False, "error": "Prompt is required."}
-
-        # Call agent script instead of using Ollama chat.
-        #agent_response = run_agent(prompt)
-
-        # Create DarkCircuit agent with connection to SSH session:
+        # Run the LangGraph agent with the custom chat model
+        # agent_response = run_agent(prompt)
         agent = Darkcircuit_Agent(ssh_state["client"])
-        agent_response = agent.run_agent(prompt)
 
-        # Prepare response for OpenAI-style client
         async def generate_stream():
-            # First, send individual messages
-            for msg in agent_response["messages"]:
-                data = {
-                    "id": f"chatcmpl-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": request.model,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": msg["content"], "role": "assistant"},
-                            "finish_reason": None
-                        }
-                    ]
-                }
-                yield f"data: {json.dumps(data)}\n\n"
+            async for event in agent.run_agent_streaming(prompt):
+                if event["type"] == "token":
+                    token = event["value"]
+                    data = {
+                        "id": f"chatcmpl-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": request.model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": token, "role": "assistant"},
+                                "finish_reason": None
+                            }
+                        ]
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
+                elif event["type"] == "tool_call":
+                    yield f"data: {json.dumps({'tool_call': event})}\n\n"
+                elif event["type"] == "tool_result":
+                    yield f"data: {json.dumps({'tool_result': event})}\n\n"
 
-            # Send a final chunk indicating completion
+            # Final stop chunk
             data = {
                 "id": f"chatcmpl-{int(time.time())}",
                 "object": "chat.completion.chunk",
