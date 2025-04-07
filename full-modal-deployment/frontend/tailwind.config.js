@@ -9,6 +9,7 @@ export default {
       colors: {
         cyan: '#00FFF0',
         bgCyan: '#00ced1',
+        form: "rgba(25, 57, 55, 40)",
       },
     },
   },

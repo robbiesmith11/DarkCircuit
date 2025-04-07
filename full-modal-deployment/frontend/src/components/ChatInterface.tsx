@@ -172,7 +172,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </button>
           </div>
         </div>
-        <div className="bg-gray-900 flex- overflow-y-auto p-4 space-y-4 chat-container mt-10 rounded-lg border border-cyan">
+        
+        <h1 className="text-2xl font-bold text-white text-left mt-20">Chat Interface</h1>
+        
+        <div className="bg-gray-900 flex-1 overflow-y-auto p-4 space-y-4 chat-container mt-5 rounded-lg border border-cyan">
           {chatHistory.length > 0 ? (
               chatHistory.map((msg, index) => (
                   <div
@@ -180,19 +183,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                        className={`max-w-[80%] rounded-lg p-3 ${
+                        className={`max-w-[50%] rounded-lg p-3 ${
                             msg.role === 'user' ? 'bg-bgCyan text-black' : 'bg-gray-700 text-bgCyan'
                         }`}
                     >
                       <p className="text-sm font-semibold mb-1">
                         {msg.role === 'user' ? 'You' : 'Assistant'}
                       </p>
-                      <p className="whitespace-pre-wrap">{msg.content}</p>
+                      <p className="whitespace-pre-wrap break-words">{msg.content}</p>
                     </div>
                   </div>
               ))
           ) : (
-              <div className="flex justify-center items-center h-full text-gray-500">
+              <div className="flex justify-center items-center h-20 text-gray-500 select-none">
                 No messages yet. Start a conversation!
               </div>
           )}

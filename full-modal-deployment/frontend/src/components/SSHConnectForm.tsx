@@ -44,7 +44,7 @@ export const SSHConnectForm: React.FC<SSHConnectProps> = ({
   };
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 shadow-md">
+    <div className="bg-gray-800 rounded-lg p-4 shadow-md border border-cyan">
       <h2 className="text-xl text-white mb-4 flex items-center">
         <Server className="mr-2" size={20} />
         Connect to External Container
@@ -61,19 +61,18 @@ export const SSHConnectForm: React.FC<SSHConnectProps> = ({
           Connected to SSH server at {host}
         </div>
       ) : (
-        <form onSubmit={handleSubmit} className="space-y-3">
+        <form onSubmit={handleSubmit} className="space-y-6">
           <div className="flex items-center space-x-2">
             <div className="flex-1">
               <label className="flex items-center text-gray-300 mb-1">
                 <Server size={16} className="mr-1" />
-                Host
+                Host or IP Address
               </label>
               <input
                 type="text"
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
-                placeholder="hostname or IP"
-                className="w-full bg-gray-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-gray-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-bgCyan"
                 required
               />
             </div>
@@ -86,7 +85,7 @@ export const SSHConnectForm: React.FC<SSHConnectProps> = ({
                 value={port}
                 onChange={(e) => setPort(e.target.value)}
                 placeholder="22"
-                className="w-full bg-gray-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-gray-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-bgCyan"
                 required
               />
             </div>
@@ -101,8 +100,7 @@ export const SSHConnectForm: React.FC<SSHConnectProps> = ({
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="username"
-              className="w-full bg-gray-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-gray-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-bgCyan"
               required
             />
           </div>
@@ -113,7 +111,7 @@ export const SSHConnectForm: React.FC<SSHConnectProps> = ({
               id="useKeyAuth"
               checked={useKeyAuth}
               onChange={(e) => setUseKeyAuth(e.target.checked)}
-              className="bg-gray-700 rounded focus:ring-blue-500"
+              className="bg-gray-700 rounded focus:ring-bgCyan"
             />
             <label htmlFor="useKeyAuth" className="flex items-center">
               <Key size={16} className="mr-1" />
@@ -132,7 +130,7 @@ export const SSHConnectForm: React.FC<SSHConnectProps> = ({
                 value={keyPath}
                 onChange={(e) => setKeyPath(e.target.value)}
                 placeholder="/path/to/private/key"
-                className="w-full bg-gray-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-gray-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-bgCyan"
                 required={useKeyAuth}
               />
             </div>
@@ -146,8 +144,7 @@ export const SSHConnectForm: React.FC<SSHConnectProps> = ({
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="password"
-                className="w-full bg-gray-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-gray-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-bgCyan"
                 required={!useKeyAuth}
               />
             </div>
@@ -156,7 +153,7 @@ export const SSHConnectForm: React.FC<SSHConnectProps> = ({
           <button
             type="submit"
             disabled={isConnecting}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 flex items-center justify-center"
+            className="w-full bg-cyan hover:bg-bgCyan text-black py-2 px-4 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 flex items-center justify-center"
           >
             {isConnecting ? (
               <>
