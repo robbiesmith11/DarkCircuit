@@ -1,33 +1,17 @@
 import { useEffect, useState, useRef } from 'react';
 import { ChatInterface } from './ChatInterface';
-import { ChatMessage, Model } from '../types';
+import { ChatMessage, Model, DebugEvent } from '../types';
 import { toast } from 'react-toastify';
+import { DebugPanel } from './DebugPanel';
 
 const BACKEND_API = import.meta.env.VITE_BACKEND_API_URL || '';
-
-interface ToolCallEvent {
-  tool_call: {
-    name: string | { name: string };
-    input: string | Record<string, unknown>;
-  };
-}
-
-interface ToolResultEvent {
-  tool_result: {
-    output: {
-      result?: string;
-      content?: string;
-      [key: string]: unknown;
-    } | string;
-  };
-}
-
-type StreamedEvent = ToolCallEvent | ToolResultEvent;
 
 export const ChatContainer = () => {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
+  const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const fetchModels = async () => {
@@ -53,36 +37,13 @@ export const ChatContainer = () => {
     return () => abortControllerRef.current?.abort();
   }, []);
 
-  const formatToolMessage = (event: StreamedEvent): ChatMessage => {
-    if ('tool_call' in event) {
-      const tool = event.tool_call;
-      const name = typeof tool.name === 'string' ? tool.name : tool.name.name;
-      const input = typeof tool.input === 'string' ? tool.input : JSON.stringify(tool.input, null, 2);
-      return {
-        role: 'system',
-        content: `🛠️ **Tool called**: \`${name}\`\n📥 **Input**: \`${input}\``
-      };
-    }
-
-    if ('tool_result' in event) {
-      const raw = event.tool_result.output;
-      const output =
-        typeof raw === 'string'
-          ? raw
-          : raw?.content || raw?.result || JSON.stringify(raw, null, 2);
-      return {
-        role: 'system',
-        content: `✅ **Tool result**:\n\`\`\`\n${output}\n\`\`\``
-      };
-    }
-
-    return { role: 'system', content: '⚠️ Unknown tool event' };
-  };
-
   const handleSendMessage = async (message: string) => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
+
+    // Reset debug events for new conversation
+    setDebugEvents([]);
 
     const userMessage: ChatMessage = { role: 'user', content: message };
     setChatHistory((prev) => [...prev, userMessage, { role: 'assistant', content: '' }]);
@@ -105,7 +66,7 @@ export const ChatContainer = () => {
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let assistantContent = '';
+      let assistantContentStarted = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -121,44 +82,93 @@ export const ChatContainer = () => {
 
           try {
             const parsed = JSON.parse(data);
+            console.log("Parsed data:", parsed);
 
-            if (parsed.tool_call || parsed.tool_result) {
-              const toolMessage = formatToolMessage(parsed);
-              setChatHistory((prev) => [...prev, toolMessage]);
+            // Log actual structure of the event to help with debugging
+            console.log("Event structure:", Object.keys(parsed));
+
+            // Handle standardized tool calls - only add to debug panel
+            if (parsed.type === 'tool_call') {
+              console.log("💥 TOOL CALL DETECTED:", parsed);
+
+              // Extract tool name and input with proper fallbacks
+              const toolName = parsed.name || 'unnamed tool';
+              const toolInput = typeof parsed.input === 'string'
+                ? parsed.input
+                : JSON.stringify(parsed.input, null, 2);
+
+              // Add to debug panel
+              setDebugEvents(prev => [...prev, {
+                type: 'tool_call',
+                timestamp: new Date(),
+                content: `Tool: ${toolName}\nInput: ${toolInput}`
+              }]);
             }
 
-            if (parsed.choices && parsed.choices[0]?.delta?.content !== undefined) {
-              const token = parsed.choices[0].delta.content;
-              assistantContent += token;
-              setChatHistory((prev) => {
-                const updated = [...prev];
-                const lastIndex = updated.findIndex(
-                  (msg, i) => msg.role === 'assistant' && i === updated.length - 1
-                );
-                if (lastIndex !== -1) {
-                  updated[lastIndex] = {
-                    ...updated[lastIndex],
-                    content: assistantContent
-                  };
-                }
-                return updated;
-              });
-            } else if (parsed.type === 'token' && typeof parsed.value === 'string') {
-              const token = parsed.value;
-              assistantContent += token;
-              setChatHistory((prev) => {
-                const updated = [...prev];
-                const lastIndex = updated.findIndex(
-                  (msg, i) => msg.role === 'assistant' && i === updated.length - 1
-                );
-                if (lastIndex !== -1) {
-                  updated[lastIndex] = {
-                    ...updated[lastIndex],
-                    content: assistantContent
-                  };
-                }
-                return updated;
-              });
+            // Handle standardized tool results - only add to debug panel
+            else if (parsed.type === 'tool_result') {
+              console.log("💥 TOOL RESULT DETECTED:", parsed);
+
+              // Extract result content with proper fallbacks
+              const resultContent = typeof parsed.output === 'string'
+                ? parsed.output
+                : JSON.stringify(parsed.output, null, 2);
+
+              // Add to debug panel
+              setDebugEvents(prev => [...prev, {
+                type: 'tool_result',
+                timestamp: new Date(),
+                content: resultContent
+              }]);
+            }
+
+            // Handle thinking events - only add to debug panel
+            else if (parsed.type === 'thinking' && typeof parsed.value === 'string') {
+              // Only add to debug panel, not to chat history
+              setDebugEvents(prev => [...prev, {
+                type: 'thinking',
+                timestamp: new Date(),
+                content: parsed.value
+              }]);
+            }
+
+            // Handle normal content tokens (both OpenAI format and custom)
+            else if (
+              (parsed.choices && parsed.choices[0]?.delta?.content !== undefined) ||
+              (parsed.type === 'token' && typeof parsed.value === 'string')
+            ) {
+              const token = parsed.choices
+                ? parsed.choices[0].delta.content
+                : parsed.value;
+
+              if (token.trim() !== '') {
+                assistantContentStarted = true;
+
+                // Add meaningful tokens to assistant's response
+                setChatHistory(prev => {
+                  const updated = [...prev];
+                  const assistantIndex = updated.findIndex(msg => msg.role === 'assistant');
+
+                  if (assistantIndex !== -1) {
+                    // Get current content and append the new token
+                    const currentContent = updated[assistantIndex].content || '';
+                    updated[assistantIndex] = {
+                      ...updated[assistantIndex],
+                      content: currentContent + token
+                    };
+                  }
+                  return updated;
+                });
+              }
+              // First empty tokens with no thinking yet
+              else if (!assistantContentStarted) {
+                setDebugEvents(prev => [...prev, {
+                  type: 'thinking',
+                  timestamp: new Date(),
+                  content: "Processing request..."
+                }]);
+                assistantContentStarted = true;
+              }
             }
 
           } catch (err) {
@@ -167,32 +177,15 @@ export const ChatContainer = () => {
         }
       }
 
-      // ✅ Force flush at the end
-      if (assistantContent) {
-        setChatHistory((prev) => {
-          const updated = [...prev];
-          const lastIndex = updated.findIndex(
-            (msg, i) => msg.role === 'assistant' && i === updated.length - 1
-          );
-          if (lastIndex !== -1) {
-            updated[lastIndex] = {
-              ...updated[lastIndex],
-              content: assistantContent
-            };
-          }
-          return updated;
-        });
-      }
-
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error('Streaming error:', errorMsg);
       setChatHistory((prev) => {
         const updated = [...prev];
-        const lastIndex = updated.findIndex((msg, i) => msg.role === 'assistant' && i === updated.length - 1);
-        if (lastIndex !== -1) {
-          updated[lastIndex] = {
-            ...updated[lastIndex],
+        const assistantIndex = updated.findIndex(msg => msg.role === 'assistant');
+        if (assistantIndex !== -1) {
+          updated[assistantIndex] = {
+            ...updated[assistantIndex],
             content: `Error: ${errorMsg}`
           };
         }
@@ -233,17 +226,35 @@ export const ChatContainer = () => {
   };
 
   return (
-    <div className="h-full">
-      <ChatInterface
-        models={models}
-        chatHistory={chatHistory}
-        onSendMessage={handleSendMessage}
-        onClearChat={() => setChatHistory([])}
-        onModelSelect={setSelectedModel}
-        onModelDelete={handleModelDelete}
-        onModelPull={handleModelPull}
-        selectedModel={selectedModel}
-      />
+    <div className="h-full flex flex-col max-h-screen">
+      {/* Main chat interface - now has a flex-grow but with min-height */}
+      <div className="flex-grow min-h-0 overflow-hidden">
+        <ChatInterface
+          models={models}
+          chatHistory={chatHistory}
+          onSendMessage={handleSendMessage}
+          onClearChat={() => {
+            setChatHistory([]);
+            setDebugEvents([]);
+          }}
+          onModelSelect={setSelectedModel}
+          onModelDelete={handleModelDelete}
+          onModelPull={handleModelPull}
+          selectedModel={selectedModel}
+          onToggleDebug={() => setShowDebugPanel(!showDebugPanel)}
+          showDebugPanel={showDebugPanel}
+        />
+      </div>
+
+      {/* Debug panel - fixed height with scrolling */}
+      {showDebugPanel && (
+        <div className="h-64 border-t border-gray-700 overflow-hidden flex-shrink-0">
+          <DebugPanel
+            events={debugEvents}
+            onClear={() => setDebugEvents([])}
+          />
+        </div>
+      )}
     </div>
   );
 };

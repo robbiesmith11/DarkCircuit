@@ -157,7 +157,8 @@ class ModalOllamaChatModel(BaseChatModel, Runnable):
 # FastAPI private backend server
 @app.function(
     image=app_image.add_local_dir("frontend/dist", remote_path="/assets"),
-    scaledown_window=15 * MINUTES
+    scaledown_window=15 * MINUTES,
+    secrets=[modal.Secret.from_name("OpenAI-secret")]
 )
 @modal.asgi_app()
 def App():
@@ -411,8 +412,11 @@ def App():
 
         async def generate_stream():
             async for event in agent.run_agent_streaming(prompt):
-                if event["type"] == "token":
-                    token = event["value"]
+                event_type = event.get("type", "unknown")
+
+                # For token events (chat content)
+                if event_type == "token":
+                    token = event.get("value", "")
                     data = {
                         "id": f"chatcmpl-{int(time.time())}",
                         "object": "chat.completion.chunk",
@@ -427,10 +431,11 @@ def App():
                         ]
                     }
                     yield f"data: {json.dumps(data)}\n\n"
-                elif event["type"] == "tool_call":
-                    yield f"data: {json.dumps({'tool_call': event})}\n\n"
-                elif event["type"] == "tool_result":
-                    yield f"data: {json.dumps({'tool_result': event})}\n\n"
+
+                # For thinking, tool_call, and tool_result events
+                elif event_type in ["thinking", "tool_call", "tool_result"]:
+                    # Forward these events directly for the debug panel
+                    yield f"data: {json.dumps(event)}\n\n"
 
             # Final stop chunk
             data = {
