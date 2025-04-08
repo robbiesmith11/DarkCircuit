@@ -96,7 +96,8 @@ def close_ssh_connection():
     image=app_image.add_local_dir("frontend/dist", remote_path="/assets"),
     scaledown_window=15 * MINUTES,
     min_containers=1,
-    max_containers=1
+    max_containers=1,
+    secrets=[modal.Secret.from_name("OpenAI-secret")]
 )
 @modal.asgi_app()
 def App():
