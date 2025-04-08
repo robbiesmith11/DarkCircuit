@@ -51,11 +51,11 @@ def setup_ssh_connection(host: str, port: int, username: str, password: Optional
         if key_path:
             if password:
                 key = paramiko.RSAKey.from_private_key_file(key_path, password=password)
-                client.connect(hostname=host, port=port, username=username, pkey=key, timeout=10)
+                client.connect(hostname=host, port=port, username=username, pkey=key, timeout=30*MINUTES)
             else:
-                client.connect(hostname=host, port=port, username=username, key_filename=key_path, timeout=10)
+                client.connect(hostname=host, port=port, username=username, key_filename=key_path, timeout=30*MINUTES)
         else:
-            client.connect(hostname=host, port=port, username=username, password=password, timeout=10)
+            client.connect(hostname=host, port=port, username=username, password=password, timeout=30*MINUTES)
 
         # Store the client for later use
         ssh_state["client"] = client
