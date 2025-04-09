@@ -126,7 +126,7 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-900">
+    <div className="flex h-screen bg-black">
       <Sidebar
         onServiceToggle={handleServiceToggle}
       />
@@ -140,7 +140,7 @@ function App() {
             <div className="flex-1 flex flex-col">
               {!isSshConnected ? (
                 <div className="bg-gray-800 rounded-lg p-4 h-full flex flex-col justify-center">
-                  <h2 className="text-white text-lg mb-4 text-center">Connect to Remote Terminal</h2>
+                  <h1 className="font-bold text-white text-lg mb-6 text-center">Connect to Remote Terminal</h1>
                   <SSHConnectForm
                     onConnect={handleSshConnect}
                     isConnecting={isSshConnecting}

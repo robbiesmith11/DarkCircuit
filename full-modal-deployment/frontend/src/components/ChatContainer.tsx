@@ -257,7 +257,7 @@ export const ChatContainer = () => {
   };
 
   return (
-    <div className="h-full flex flex-col max-h-screen">
+    <div className="h-full bg-black flex flex-col max-h-screen">
       {/* Main chat interface - now has a flex-grow but with min-height */}
       <div className="flex-grow min-h-0 overflow-hidden">
         <ChatInterface

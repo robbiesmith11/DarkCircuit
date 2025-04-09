@@ -2,6 +2,37 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: 'MonomaniacOne';
+  src: url('../MonomaniacOne-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* Custom scrollbar for WebKit browsers (Chrome, Edge, Safari) */
+.chat-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat-container::-webkit-scrollbar-track {
+  background: #1a1a1a; 
+}
+
+.chat-container::-webkit-scrollbar-thumb {
+  background: #00FFF0;
+  border-radius: 4px;
+}
+
+.chat-container::-webkit-scrollbar-thumb:hover {
+  background: #00CED1;
+}
+
+/* Custom scrollbar for Firefox */
+.chat-container {
+  scrollbar-color: #00FFF0 #1a1a1a;
+  scrollbar-width: thin;
+}
+
 .xterm {
   height: 100% !important;
   padding: 8px;
