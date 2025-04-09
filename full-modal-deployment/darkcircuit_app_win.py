@@ -7,9 +7,8 @@ import base64
 import tempfile
 import paramiko
 import os
-
 from fastapi import Request
-from agent import run_agent
+
 from darkcircuit_agent import Darkcircuit_Agent
 
 MINUTES = 60  # seconds
@@ -448,7 +447,6 @@ def App():
         prompt = request.messages[-1].content  # Take the latest user message as prompt
 
         # Run the LangGraph agent with the custom chat model
-        # agent_response = run_agent(prompt)
         agent = Darkcircuit_Agent(ssh_state["client"])
 
         async def generate_stream():
