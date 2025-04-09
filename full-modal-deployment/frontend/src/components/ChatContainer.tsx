@@ -13,6 +13,9 @@ export const ChatContainer = () => {
   const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const currentAssistantIndexRef = useRef<number>(-1);
+  // Add a flag to track if a response is currently streaming
+  const [isStreaming, setIsStreaming] = useState(false);
 
   const fetchModels = async () => {
     try {
@@ -46,7 +49,15 @@ export const ChatContainer = () => {
     setDebugEvents([]);
 
     const userMessage: ChatMessage = { role: 'user', content: message };
-    setChatHistory((prev) => [...prev, userMessage, { role: 'assistant', content: '' }]);
+    // Add user message and create an empty assistant message
+    setChatHistory((prev) => [...prev, userMessage, { role: 'assistant', content: '', isMarkdown: false }]);
+
+    // Set streaming flag to true
+    setIsStreaming(true);
+
+    // Set the current assistant index to the newly added assistant message
+    const newAssistantIndex = chatHistory.length + 1; // +1 for user message we just added
+    currentAssistantIndexRef.current = newAssistantIndex;
 
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
@@ -141,20 +152,22 @@ export const ChatContainer = () => {
                 ? parsed.choices[0].delta.content
                 : parsed.value;
 
-              if (token.trim() !== '') {
+              if (typeof token === 'string') {
                 assistantContentStarted = true;
 
                 // Add meaningful tokens to assistant's response
                 setChatHistory(prev => {
                   const updated = [...prev];
-                  const assistantIndex = updated.findIndex(msg => msg.role === 'assistant');
+                  // Use the stored index to ensure we're updating the correct message
+                  const assistantIndex = currentAssistantIndexRef.current;
 
-                  if (assistantIndex !== -1) {
+                  if (assistantIndex >= 0 && assistantIndex < updated.length) {
                     // Get current content and append the new token
                     const currentContent = updated[assistantIndex].content || '';
                     updated[assistantIndex] = {
                       ...updated[assistantIndex],
-                      content: currentContent + token
+                      content: currentContent + token,
+                      isMarkdown: false, // Keep as false while streaming
                     };
                   }
                   return updated;
@@ -177,20 +190,38 @@ export const ChatContainer = () => {
         }
       }
 
+      // Streaming is complete, set markdown flag to true
+      setChatHistory(prev => {
+        const updated = [...prev];
+        const assistantIndex = currentAssistantIndexRef.current;
+
+        if (assistantIndex >= 0 && assistantIndex < updated.length) {
+          updated[assistantIndex] = {
+            ...updated[assistantIndex],
+            isMarkdown: true, // Now mark as markdown to trigger rendering
+          };
+        }
+        return updated;
+      });
+
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error('Streaming error:', errorMsg);
       setChatHistory((prev) => {
         const updated = [...prev];
-        const assistantIndex = updated.findIndex(msg => msg.role === 'assistant');
-        if (assistantIndex !== -1) {
+        const assistantIndex = currentAssistantIndexRef.current;
+        if (assistantIndex >= 0 && assistantIndex < updated.length) {
           updated[assistantIndex] = {
             ...updated[assistantIndex],
-            content: `Error: ${errorMsg}`
+            content: `Error: ${errorMsg}`,
+            isMarkdown: false, // Errors don't need markdown
           };
         }
         return updated;
       });
+    } finally {
+      // Set streaming flag to false when complete
+      setIsStreaming(false);
     }
   };
 
@@ -236,6 +267,7 @@ export const ChatContainer = () => {
           onClearChat={() => {
             setChatHistory([]);
             setDebugEvents([]);
+            currentAssistantIndexRef.current = -1; // Reset assistant index on chat clear
           }}
           onModelSelect={setSelectedModel}
           onModelDelete={handleModelDelete}
@@ -243,6 +275,7 @@ export const ChatContainer = () => {
           selectedModel={selectedModel}
           onToggleDebug={() => setShowDebugPanel(!showDebugPanel)}
           showDebugPanel={showDebugPanel}
+          isStreaming={isStreaming}
         />
       </div>
 

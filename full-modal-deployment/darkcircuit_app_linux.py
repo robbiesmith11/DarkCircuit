@@ -50,20 +50,53 @@ def setup_ssh_connection(host: str, port: int, username: str, password: Optional
     """
     Establish an SSH connection to an external server
     """
+    # First, ensure any existing connection is properly closed
+    close_ssh_connection()
+
     try:
         # Create SSH client
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-        # Connect with either password or key
+        # Configure connection timeout and keep-alive
+        connect_kwargs = {
+            'hostname': host,
+            'port': port,
+            'username': username,
+            'timeout': 10,
+            'banner_timeout': 15,
+            'allow_agent': False,
+            'look_for_keys': False
+        }
+
+        # Add either password or key authentication
         if key_path:
             if password:
                 key = paramiko.RSAKey.from_private_key_file(key_path, password=password)
-                client.connect(hostname=host, port=port, username=username, pkey=key, timeout=10)
+                connect_kwargs['pkey'] = key
             else:
-                client.connect(hostname=host, port=port, username=username, key_filename=key_path, timeout=10)
+                connect_kwargs['key_filename'] = key_path
         else:
-            client.connect(hostname=host, port=port, username=username, password=password, timeout=10)
+            connect_kwargs['password'] = password
+
+        # Connect to the SSH server
+        client.connect(**connect_kwargs)
+
+        # Enable keep-alive packets
+        transport = client.get_transport()
+        if transport:
+            transport.set_keepalive(30)  # Send keep-alive every 30 seconds
+
+        # Verify connection with a test command
+        try:
+            stdin, stdout, stderr = client.exec_command("echo connected", timeout=5)
+            result = stdout.read().decode('utf-8', errors='replace').strip()
+            if result != "connected":
+                raise Exception("Test command did not return expected output")
+        except Exception as e:
+            # If test fails, close connection and raise error
+            client.close()
+            raise Exception(f"Connection test failed: {str(e)}")
 
         # Store the client for later use
         ssh_state["client"] = client
@@ -75,6 +108,20 @@ def setup_ssh_connection(host: str, port: int, username: str, password: Optional
             "message": f"SSH connection established to {host}."
         }
 
+    except paramiko.ssh_exception.AuthenticationException as e:
+        ssh_state["connected"] = False
+        ssh_state["error"] = "Authentication failed. Please check your username, password or key."
+        return {
+            "success": False,
+            "error": "Authentication failed. Please check your username, password or key."
+        }
+    except paramiko.ssh_exception.NoValidConnectionsError as e:
+        ssh_state["connected"] = False
+        ssh_state["error"] = f"Could not connect to {host}:{port}. Server may be down or unreachable."
+        return {
+            "success": False,
+            "error": f"Could not connect to {host}:{port}. Server may be down or unreachable."
+        }
     except Exception as e:
         ssh_state["connected"] = False
         ssh_state["error"] = str(e)
@@ -97,6 +144,12 @@ def close_ssh_connection():
 
     if ssh_state["client"]:
         try:
+            # Try graceful shutdown first
+            transport = ssh_state["client"].get_transport()
+            if transport and transport.is_active():
+                transport.close()
+
+            # Now close the client
             ssh_state["client"].close()
         except:
             pass
@@ -157,7 +210,8 @@ class ModalOllamaChatModel(BaseChatModel, Runnable):
 # FastAPI private backend server
 @app.function(
     image=app_image.add_local_dir("frontend/dist", remote_path="/assets"),
-    scaledown_window=15 * MINUTES,
+    timeout=30*MINUTES,
+    scaledown_window=15*MINUTES,
     secrets=[modal.Secret.from_name("OpenAI-secret")]
 )
 @modal.asgi_app()
@@ -206,6 +260,7 @@ def App():
     # FastAPI WebSocket endpoint for terminal with proper PTY handling
     @fastapi_app.websocket("/ws/ssh-terminal")
     async def terminal_endpoint(websocket: WebSocket):
+        global ssh_state
         await websocket.accept()
 
         try:
@@ -216,15 +271,35 @@ def App():
                 return
 
             # Get transport and open an interactive session
-            transport = ssh_state["client"].get_transport()
-            ssh_state["channel"] = channel = transport.open_session()
+            try:
+                transport = ssh_state["client"].get_transport()
+                if transport is None or not transport.is_active():
+                    ssh_state["connected"] = False
+                    await websocket.send_text("SSH transport is no longer active. Please reconnect.")
+                    await websocket.close()
+                    return
+
+                ssh_state["channel"] = channel = transport.open_session()
+            except Exception as e:
+                ssh_state["connected"] = False
+                ssh_state["error"] = str(e)
+                await websocket.send_text(f"Failed to establish SSH channel: {str(e)}")
+                await websocket.close()
+                return
 
             # Request a pseudo-terminal
-            term = os.environ.get('TERM', 'xterm')
-            channel.get_pty(term, 80, 24)
+            try:
+                term = os.environ.get('TERM', 'xterm')
+                channel.get_pty(term, 80, 24)
 
-            # Start shell
-            channel.invoke_shell()
+                # Start shell
+                channel.invoke_shell()
+            except Exception as e:
+                ssh_state["connected"] = False
+                ssh_state["error"] = str(e)
+                await websocket.send_text(f"Failed to initialize terminal: {str(e)}")
+                await websocket.close()
+                return
 
             # Mark as running
             ssh_state["running"] = True
@@ -241,10 +316,27 @@ def App():
                             else:
                                 break
                         else:
+                            # Short sleep to prevent CPU spinning
                             await asyncio.sleep(0.05)
+
+                            # Check if channel is still open but not sending data
+                            if not channel.exit_status_ready() and not channel.recv_ready():
+                                try:
+                                    # Try sending a null byte to keep the connection alive
+                                    # This acts like a keepalive packet
+                                    if time.time() % 30 < 0.1:  # Approximately every 30 seconds
+                                        channel.send('\0')
+                                except:
+                                    # If we can't send, channel is likely dead
+                                    break
                 except Exception as e:
                     print(f"Error in ssh_to_ws: {e}")
                     ssh_state["error"] = str(e)
+                    # Try to inform the client if possible
+                    try:
+                        await websocket.send_text(f"\r\n\x1b[1;31mError: {str(e)}\x1b[0m")
+                    except:
+                        pass
                 finally:
                     ssh_state["running"] = False
 
@@ -253,8 +345,11 @@ def App():
                 try:
                     while ssh_state["running"]:
                         try:
-                            # Receive both text and binary messages
-                            message = await websocket.receive()
+                            # Receive both text and binary messages with a timeout
+                            message = await asyncio.wait_for(
+                                websocket.receive(),
+                                timeout=1.0  # 1 second timeout to check if connection is still running
+                            )
 
                             # Check message type
                             if "text" in message:
@@ -273,9 +368,13 @@ def App():
                                 channel.send(data)
 
                         except asyncio.TimeoutError:
-                            # Check if connection is still alive
+                            # Just a timeout, loop and try again if we're still supposed to be running
                             if not ssh_state["running"] or channel.exit_status_ready():
                                 break
+                        except Exception as e:
+                            # Handle any WebSocket closure or disconnection
+                            print(f"WebSocket receive error: {e}")
+                            break
 
                 except Exception as e:
                     print(f"Error in ws_to_ssh: {e}")
@@ -291,7 +390,10 @@ def App():
 
         except Exception as e:
             print(f"Error in terminal_endpoint: {e}")
-            await websocket.send_text(f"Error: {str(e)}")
+            try:
+                await websocket.send_text(f"Error: {str(e)}")
+            except:
+                pass
 
         finally:
             # Clean up SSH channel but keep the SSH connection

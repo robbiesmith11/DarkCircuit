@@ -1,6 +1,7 @@
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'thinking';
   content: string;
+  isMarkdown?: boolean;
 }
 
 export interface DebugEvent {

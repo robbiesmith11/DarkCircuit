@@ -1,6 +1,19 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, ComponentPropsWithoutRef } from 'react';
 import { Send, Trash2, Download, Terminal } from 'lucide-react';
 import { ChatMessage, Model } from '../types';
+// Import ReactMarkdown and necessary plugins
+import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import remarkGfm from 'remark-gfm';
+
+// Define more accurate types for ReactMarkdown code components
+type ReactMarkdownCodeComponentProps = ComponentPropsWithoutRef<'code'> & {
+  inline?: boolean;
+  className?: string;
+  node?: unknown;
+  children: React.ReactNode;
+};
 
 interface ChatInterfaceProps {
   models: Model[];
@@ -13,6 +26,7 @@ interface ChatInterfaceProps {
   selectedModel: string;
   onToggleDebug: () => void;
   showDebugPanel: boolean;
+  isStreaming: boolean;
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -25,7 +39,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   onModelPull,
   selectedModel,
   onToggleDebug,
-  showDebugPanel
+  showDebugPanel,
+  isStreaming
 }) => {
   const [message, setMessage] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -93,6 +108,25 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       return () => clearTimeout(timer);
     }
   }, [pullStatus]);
+
+  // Custom code component for ReactMarkdown with proper typing
+  const CodeBlock = ({ inline, className, children, ...props }: ReactMarkdownCodeComponentProps) => {
+    const match = /language-(\w+)/.exec(className || '');
+    return !inline ? (
+      <SyntaxHighlighter
+        // Type assertion to avoid vscDarkPlus type errors
+        style={vscDarkPlus as Record<string, React.CSSProperties>}
+        language={match ? match[1] : ''}
+        PreTag="div"
+      >
+        {String(children).replace(/\n$/, '')}
+      </SyntaxHighlighter>
+    ) : (
+      <code className={className} {...props}>
+        {children}
+      </code>
+    );
+  };
 
   return (
     <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden">
@@ -216,7 +250,25 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       <p className="text-sm font-semibold mb-1">
                         {msg.role === 'user' ? 'You' : '🤖 Assistant'}
                       </p>
-                      <p className="whitespace-pre-wrap">{msg.content}</p>
+                      {msg.role === 'assistant' && msg.isMarkdown ? (
+                        // Use ReactMarkdown for completed messages
+                        <div className="markdown-content">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              // Using type assertion with more specific type instead of 'any'
+                              code: CodeBlock as React.ComponentType<React.ClassAttributes<HTMLElement> & React.HTMLAttributes<HTMLElement>>
+                            }}
+                          >
+                            {msg.content}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        // Use the same whitespace handling as the debug panel
+                        <div className="text-white whitespace-pre-wrap">
+                          {msg.content}
+                        </div>
+                      )}
                     </div>
                   </div>
               );
@@ -236,14 +288,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Ask about security tools, techniques or concepts..."
             className="flex-1 bg-gray-700 text-white rounded-lg px-4 py-2"
+            disabled={isStreaming}
           />
           <button
             type="submit"
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center"
-            disabled={!message.trim()}
+            disabled={!message.trim() || isStreaming}
           >
             <Send className="mr-2" size={18}/>
-            Send
+            {isStreaming ? 'Processing...' : 'Send'}
           </button>
         </div>
       </form>
