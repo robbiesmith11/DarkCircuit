@@ -1,5 +1,12 @@
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system' | 'thinking';
+  content: string;
+  isMarkdown?: boolean;
+}
+
+export interface DebugEvent {
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'token';
+  timestamp: Date;
   content: string;
 }
 

@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { ChatInterface } from './ChatInterface';
-import { ChatMessage, Model } from '../types';
+import { ChatMessage, Model, DebugEvent } from '../types';
 import { toast } from 'react-toastify';
+import { DebugPanel } from './DebugPanel';
 
 const BACKEND_API = import.meta.env.VITE_BACKEND_API_URL || '';
 
@@ -9,255 +10,284 @@ export const ChatContainer = () => {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
-  // Removed unused isLoading state
+  const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const currentAssistantIndexRef = useRef<number>(-1);
+  // Add a flag to track if a response is currently streaming
+  const [isStreaming, setIsStreaming] = useState(false);
 
-  // Fetch models from the API
   const fetchModels = async () => {
     try {
       const res = await fetch(`${BACKEND_API}/api/models`);
-      if (!res.ok) {
-        throw new Error(`HTTP error ${res.status}`);
-      }
-
       const data = await res.json();
-      console.log('Fetched models:', data);
-
-      if (data.models && data.models.length > 0) {
+      if (data.models?.length) {
         setModels(data.models);
-
-        // Only set selected model if it's not already set or if current selection is no longer available
-        if (!selectedModel || !data.models.some((model: Model) => model.model === selectedModel)) {
+        if (!selectedModel || !data.models.some((m: Model) => m.model === selectedModel)) {
           setSelectedModel(data.models[0].model);
-          console.log('Selected Model:', data.models[0].model);
         }
       } else {
         setModels([]);
         setSelectedModel('');
       }
     } catch (error) {
-      console.error('Error fetching models:', error);
       toast.error(`Failed to fetch models: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
   useEffect(() => {
-    console.log('ChatContainer mounted');
     fetchModels();
-
-    // Clean up function
-    return () => {
-      console.log('ChatContainer unmounted');
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
+    return () => abortControllerRef.current?.abort();
   }, []);
 
-  // Handle sending messages
-  const handleSendMessage = (message: string) => {
-    // Abort any previous request
+  const handleSendMessage = async (message: string) => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
 
+    // Reset debug events for new conversation
+    setDebugEvents([]);
+
     const userMessage: ChatMessage = { role: 'user', content: message };
-    setChatHistory((prev) => [...prev, userMessage]);
+    // Add user message and create an empty assistant message
+    setChatHistory((prev) => [...prev, userMessage, { role: 'assistant', content: '', isMarkdown: false }]);
 
-    // Create messages array for API request
-    const messages = [...chatHistory, userMessage].map(msg => ({
-      role: msg.role,
-      content: msg.content
-    }));
+    // Set streaming flag to true
+    setIsStreaming(true);
 
-    // Create a placeholder for the assistant's response
-    setChatHistory((prev) => [...prev, {
-      role: 'assistant',
-      content: ''
-    }]);
+    // Set the current assistant index to the newly added assistant message
+    const newAssistantIndex = chatHistory.length + 1; // +1 for user message we just added
+    currentAssistantIndexRef.current = newAssistantIndex;
 
-    // Create a new AbortController for this request
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
 
-    // Create the fetch request for SSE
-    fetch(`${BACKEND_API}/api/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: selectedModel,
-        messages: messages
-      }),
-      signal
-    }).then(response => {
-      if (!response.body) {
-        throw new Error('ReadableStream not supported in this browser.');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      let buffer = '';
-
-      function processChunks(): Promise<void> {
-        return reader.read().then(({ done, value }) => {
-          if (done) {
-            console.log('Stream complete');
-            return;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-
-          // Process buffer content
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || ''; // Keep the last incomplete chunk in the buffer
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              let data = line.slice(6); // Remove 'data: ' prefix
-
-              if (data === '[DONE]') {
-                console.log('Stream finished');
-                continue;
-              }
-
-              try {
-                const parsed = JSON.parse(data);
-
-                // Extract the content from the chunk
-                const content = parsed.choices[0].delta.content || '';
-
-                // Update the last assistant message
-                setChatHistory(prev => {
-                  const newHistory = [...prev];
-                  const lastMessageIndex = newHistory.length - 1;
-
-                  if (lastMessageIndex >= 0 && newHistory[lastMessageIndex].role === 'assistant') {
-                    newHistory[lastMessageIndex] = {
-                      ...newHistory[lastMessageIndex],
-                      content: newHistory[lastMessageIndex].content + content
-                    };
-                  }
-
-                  return newHistory;
-                });
-              } catch (error) {
-                console.error('Error parsing SSE data:', error, data);
-              }
-            }
-          }
-
-          return processChunks();
-        }).catch(error => {
-          if (error.name === 'AbortError') {
-            console.log('Fetch aborted');
-          } else {
-            console.error('Error processing stream:', error);
-          }
-        });
-      }
-
-      return processChunks();
-    }).catch(error => {
-      if (error.name === 'AbortError') {
-        console.log('Fetch aborted');
-      } else {
-        console.error('Error with streaming:', error);
-        setChatHistory(prev => {
-          const newHistory = [...prev];
-          const lastMessageIndex = newHistory.length - 1;
-
-          if (lastMessageIndex >= 0 && newHistory[lastMessageIndex].role === 'assistant') {
-            newHistory[lastMessageIndex] = {
-              ...newHistory[lastMessageIndex],
-              content: 'Error: Could not connect to the chat service. Please try again later.'
-            };
-          }
-
-          return newHistory;
-        });
-      }
-    });
-  };
-
-  // Handle model deletion with proper error handling and UI feedback
-  const handleModelDelete = async (model: string): Promise<void> => {
-    if (!model) return;
-
-    // Starting deletion process
     try {
-      const res = await fetch(`${BACKEND_API}/api/models/${model}`, {
-        method: 'DELETE'
+      const res = await fetch(`${BACKEND_API}/api/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: [{ role: 'user', content: message }]
+        }),
+        signal
       });
 
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || `Failed with status: ${res.status}`);
+      if (!res.ok || !res.body) throw new Error(`HTTP error ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantContentStarted = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const messages = chunk.split('\n\n');
+
+        for (const msg of messages) {
+          if (!msg.startsWith('data: ')) continue;
+          const data = msg.replace('data: ', '').trim();
+          if (data === '[DONE]') break;
+
+          try {
+            const parsed = JSON.parse(data);
+            console.log("Parsed data:", parsed);
+
+            // Log actual structure of the event to help with debugging
+            console.log("Event structure:", Object.keys(parsed));
+
+            // Handle standardized tool calls - only add to debug panel
+            if (parsed.type === 'tool_call') {
+              console.log("💥 TOOL CALL DETECTED:", parsed);
+
+              // Extract tool name and input with proper fallbacks
+              const toolName = parsed.name || 'unnamed tool';
+              const toolInput = typeof parsed.input === 'string'
+                ? parsed.input
+                : JSON.stringify(parsed.input, null, 2);
+
+              // Add to debug panel
+              setDebugEvents(prev => [...prev, {
+                type: 'tool_call',
+                timestamp: new Date(),
+                content: `Tool: ${toolName}\nInput: ${toolInput}`
+              }]);
+            }
+
+            // Handle standardized tool results - only add to debug panel
+            else if (parsed.type === 'tool_result') {
+              console.log("💥 TOOL RESULT DETECTED:", parsed);
+
+              // Extract result content with proper fallbacks
+              const resultContent = typeof parsed.output === 'string'
+                ? parsed.output
+                : JSON.stringify(parsed.output, null, 2);
+
+              // Add to debug panel
+              setDebugEvents(prev => [...prev, {
+                type: 'tool_result',
+                timestamp: new Date(),
+                content: resultContent
+              }]);
+            }
+
+            // Handle thinking events - only add to debug panel
+            else if (parsed.type === 'thinking' && typeof parsed.value === 'string') {
+              // Only add to debug panel, not to chat history
+              setDebugEvents(prev => [...prev, {
+                type: 'thinking',
+                timestamp: new Date(),
+                content: parsed.value
+              }]);
+            }
+
+            // Handle normal content tokens (both OpenAI format and custom)
+            else if (
+              (parsed.choices && parsed.choices[0]?.delta?.content !== undefined) ||
+              (parsed.type === 'token' && typeof parsed.value === 'string')
+            ) {
+              const token = parsed.choices
+                ? parsed.choices[0].delta.content
+                : parsed.value;
+
+              if (typeof token === 'string') {
+                assistantContentStarted = true;
+
+                // Add meaningful tokens to assistant's response
+                setChatHistory(prev => {
+                  const updated = [...prev];
+                  // Use the stored index to ensure we're updating the correct message
+                  const assistantIndex = currentAssistantIndexRef.current;
+
+                  if (assistantIndex >= 0 && assistantIndex < updated.length) {
+                    // Get current content and append the new token
+                    const currentContent = updated[assistantIndex].content || '';
+                    updated[assistantIndex] = {
+                      ...updated[assistantIndex],
+                      content: currentContent + token,
+                      isMarkdown: false, // Keep as false while streaming
+                    };
+                  }
+                  return updated;
+                });
+              }
+              // First empty tokens with no thinking yet
+              else if (!assistantContentStarted) {
+                setDebugEvents(prev => [...prev, {
+                  type: 'thinking',
+                  timestamp: new Date(),
+                  content: "Processing request..."
+                }]);
+                assistantContentStarted = true;
+              }
+            }
+
+          } catch (err) {
+            console.warn('Parse error:', msg, err);
+          }
+        }
       }
 
+      // Streaming is complete, set markdown flag to true
+      setChatHistory(prev => {
+        const updated = [...prev];
+        const assistantIndex = currentAssistantIndexRef.current;
+
+        if (assistantIndex >= 0 && assistantIndex < updated.length) {
+          updated[assistantIndex] = {
+            ...updated[assistantIndex],
+            isMarkdown: true, // Now mark as markdown to trigger rendering
+          };
+        }
+        return updated;
+      });
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('Streaming error:', errorMsg);
+      setChatHistory((prev) => {
+        const updated = [...prev];
+        const assistantIndex = currentAssistantIndexRef.current;
+        if (assistantIndex >= 0 && assistantIndex < updated.length) {
+          updated[assistantIndex] = {
+            ...updated[assistantIndex],
+            content: `Error: ${errorMsg}`,
+            isMarkdown: false, // Errors don't need markdown
+          };
+        }
+        return updated;
+      });
+    } finally {
+      // Set streaming flag to false when complete
+      setIsStreaming(false);
+    }
+  };
+
+  const handleModelDelete = async (model: string) => {
+    if (!model) return;
+    try {
+      const res = await fetch(`${BACKEND_API}/api/models/${model}`, { method: 'DELETE' });
       const result = await res.json();
-
-      if (result.success) {
-        toast.success(`Model ${model} deleted successfully`);
-        // Refresh the models list
-        await fetchModels();
-      } else {
-        throw new Error(result.error || 'Unknown error occurred');
-      }
+      if (!res.ok || !result.success) throw new Error(result.error || 'Delete failed');
+      toast.success(`Model ${model} deleted`);
+      await fetchModels();
     } catch (err) {
-      console.error("Failed to delete model:", err);
       toast.error(`Failed to delete model: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
-  // Handle model pull with proper error handling and UI feedback
-  const handleModelPull = async (model: string): Promise<void> => {
+  const handleModelPull = async (model: string) => {
     if (!model) throw new Error('No model specified');
-
-    // Starting pull process
     try {
       const res = await fetch(`${BACKEND_API}/api/models/pull`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model })
       });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || `Failed with status: ${res.status}`);
-      }
-
       const result = await res.json();
-
-      if (result.success) {
-        toast.success(`Model ${model} pulled successfully`);
-        // Refresh the models list
-        await fetchModels();
-        return;
-      } else {
-        throw new Error(result.error || 'Unknown error occurred');
-      }
+      if (!res.ok || !result.success) throw new Error(result.error || 'Pull failed');
+      toast.success(`Model ${model} pulled successfully`);
+      await fetchModels();
     } catch (err) {
-      console.error("Failed to pull model:", err);
       toast.error(`Failed to pull model: ${err instanceof Error ? err.message : String(err)}`);
       throw err;
     }
   };
 
   return (
-    <div className="h-full bg-black">
-      <ChatInterface
-        models={models}
-        chatHistory={chatHistory}
-        onSendMessage={handleSendMessage}
-        onClearChat={() => setChatHistory([])}
-        onModelSelect={setSelectedModel}
-        onModelDelete={handleModelDelete}
-        onModelPull={handleModelPull}
-        selectedModel={selectedModel}
-      />
+    <div className="h-full bg-black flex flex-col max-h-screen">
+      {/* Main chat interface - now has a flex-grow but with min-height */}
+      <div className="flex-grow min-h-0 overflow-hidden">
+        <ChatInterface
+          models={models}
+          chatHistory={chatHistory}
+          onSendMessage={handleSendMessage}
+          onClearChat={() => {
+            setChatHistory([]);
+            setDebugEvents([]);
+            currentAssistantIndexRef.current = -1; // Reset assistant index on chat clear
+          }}
+          onModelSelect={setSelectedModel}
+          onModelDelete={handleModelDelete}
+          onModelPull={handleModelPull}
+          selectedModel={selectedModel}
+          onToggleDebug={() => setShowDebugPanel(!showDebugPanel)}
+          showDebugPanel={showDebugPanel}
+          isStreaming={isStreaming}
+        />
+      </div>
+
+      {/* Debug panel - fixed height with scrolling */}
+      {showDebugPanel && (
+        <div className="h-64 border-t border-gray-700 overflow-hidden flex-shrink-0">
+          <DebugPanel
+            events={debugEvents}
+            onClear={() => setDebugEvents([])}
+          />
+        </div>
+      )}
     </div>
   );
 };

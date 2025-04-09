@@ -1,22 +1,37 @@
 import modal
 from typing import List, Dict, Any, Generator, Optional
 import time
+import pty
 import subprocess
+import fcntl
+import select
 import asyncio
 import base64
 import tempfile
 import paramiko
 import os
 
-from fastapi import Request
-from agent import run_agent
+from langchain_core.runnables import Runnable
+
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.tools import Tool
+from typing import List, Optional, Any, Union
+from langchain_core.utils.function_calling import convert_to_openai_tool
+from langchain_core.outputs import ChatGeneration, ChatResult
+
+#from agent import run_agent
 from darkcircuit_agent import Darkcircuit_Agent
+
 
 MINUTES = 60  # seconds
 
 app_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("fastapi[standard]", "httpx", "paramiko",  "ollama","langchain","sseclient-py","langchain_community","langgraph","langchain_core", "langchain_openai", "duckduckgo-search==7.5.5"))
+    .pip_install("fastapi[standard]", "httpx", "paramiko", "ollama", "langchain", "sseclient-py", "langchain_community", "langgraph", "langchain_core", "langchain_openai", "duckduckgo-search==7.5.5")
+    #.add_local_python_source("agent")
+    .add_local_python_source("darkcircuit_agent")
+)
 
 app = modal.App("DarkCircuit")
 
@@ -144,13 +159,59 @@ def close_ssh_connection():
     ssh_state["error"] = None
 
 
+class ModalOllamaChatModel(BaseChatModel, Runnable):
+    model: str
+
+    def __init__(self, ollama_server, model: str):
+        object.__setattr__(self, "ollama_server", ollama_server)
+        object.__setattr__(self, "model", model)
+
+    def _generate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        ollama_messages = [{"role": self._convert_role(msg.type), "content": msg.content} for msg in messages]
+        response = ""
+        for chunk in self.ollama_server.chat.remote_gen(self.model, ollama_messages):
+            response += chunk
+
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=response))])
+
+    def _convert_role(self, msg_type: str) -> str:
+        if msg_type == "human":
+            return "user"
+        elif msg_type == "ai":
+            return "assistant"
+        elif msg_type == "system":
+            return "system"
+        elif msg_type == "tool":
+            return "tool"
+        else:
+            raise ValueError(f"Unsupported message type: {msg_type}")
+
+    def invoke(self, input: List[BaseMessage], **kwargs: Any) -> AIMessage:
+        return self._generate(input).generations[0].message
+
+    async def ainvoke(self, input: List[BaseMessage], **kwargs: Any) -> AIMessage:
+        return self._generate(input).generations[0].message
+
+    def bind_tools(self, tools: List[Tool]):
+        tool_schema = [convert_to_openai_tool(t) for t in tools]
+        return self  # You can optionally store `tool_schema` and use it in `_generate` if your Ollama model supports tools.
+
+    @property
+    def _llm_type(self) -> str:
+        return "modal_ollama"
+
+
 # FastAPI private backend server
 @app.function(
     image=app_image.add_local_dir("frontend/dist", remote_path="/assets"),
     timeout=30*MINUTES,
-    scaledown_window=15 * MINUTES,
-    min_containers=1,
-    max_containers=1,
+    scaledown_window=15*MINUTES,
     secrets=[modal.Secret.from_name("OpenAI-secret")]
 )
 @modal.asgi_app()
@@ -448,7 +509,7 @@ def App():
         prompt = request.messages[-1].content  # Take the latest user message as prompt
 
         # Run the LangGraph agent with the custom chat model
-        # agent_response = run_agent(prompt)
+        #agent_response = run_agent(prompt)
         agent = Darkcircuit_Agent(ssh_state["client"])
 
         async def generate_stream():
@@ -499,5 +560,8 @@ def App():
             generate_stream(),
             media_type="text/event-stream"
         )
+
+    # Static files
+    fastapi_app.mount("/", StaticFiles(directory="/assets", html=True), name="frontend")
 
     return fastapi_app

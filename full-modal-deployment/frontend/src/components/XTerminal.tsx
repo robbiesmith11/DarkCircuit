@@ -25,6 +25,13 @@ export const XTerminal: React.FC<XTerminalProps> = ({
   const [isMaximized, setIsMaximized] = useState(false);
   const [status, setStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [terminalReady, setTerminalReady] = useState(false);
+  // Add a reconnection trigger state
+  const [reconnectTrigger, setReconnectTrigger] = useState(0);
+  // Add a flag to track if disconnection was unexpected
+  const unexpectedDisconnectRef = useRef(false);
+  // Track auto-reconnect attempts
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 3;
 
   // Initialize the terminal
   useEffect(() => {
@@ -88,6 +95,11 @@ export const XTerminal: React.FC<XTerminalProps> = ({
       terminal.onData((data) => {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(data);
+        } else if (status !== 'connecting') {
+          // If not connected and not already attempting to connect, show feedback
+          terminal.writeln('\r\n\x1b[1;31mNot connected. Attempting to reconnect...\x1b[0m');
+          // Try to reconnect
+          setReconnectTrigger(prev => prev + 1);
         }
       });
 
@@ -103,6 +115,11 @@ export const XTerminal: React.FC<XTerminalProps> = ({
 
             // Also echo the command to the terminal for user feedback
             terminal.writeln(`$ ${command}`);
+          } else if (status !== 'connecting') {
+            // If not connected and not already attempting to connect, show feedback
+            terminal.writeln('\r\n\x1b[1;31mNot connected. Attempting to reconnect...\x1b[0m');
+            // Try to reconnect
+            setReconnectTrigger(prev => prev + 1);
           }
         });
       }
@@ -140,74 +157,117 @@ export const XTerminal: React.FC<XTerminalProps> = ({
     };
   }, [isMaximized, terminalReady]);
 
-  // Connect to WebSocket when ready and connected
-  useEffect(() => {
-    if (!terminalReady || !isConnected || !webSocketUrl) return;
+  // Create a dedicated websocket connection function
+  const connectWebSocket = () => {
+    // Reset reconnect attempts if this is a manual reconnection
+    if (reconnectTrigger > 0) {
+      reconnectAttemptsRef.current = 0;
+    }
 
-    const connectWebSocket = () => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        return; // Already connected
+    // Close existing connection if any
+    if (wsRef.current) {
+      // Only attempt to close if not already closed
+      if (wsRef.current.readyState !== WebSocket.CLOSED) {
+        unexpectedDisconnectRef.current = false; // Mark as expected disconnection
+        wsRef.current.close();
       }
+      wsRef.current = null;
+    }
 
-      setStatus('connecting');
+    // Don't proceed if we shouldn't be connected
+    if (!isConnected || !webSocketUrl || !terminalReady) {
+      return;
+    }
 
-      const ws = new WebSocket(webSocketUrl);
+    setStatus('connecting');
 
-      ws.onopen = () => {
-        setStatus('connected');
-        if (xtermRef.current) {
-          xtermRef.current.clear();
-          xtermRef.current.writeln('\r\n\x1b[1;32mConnected to remote terminal.\x1b[0m\r\n');
-        }
-      };
+    // Create new WebSocket
+    const ws = new WebSocket(webSocketUrl);
 
-      ws.onmessage = (event) => {
-        if (xtermRef.current) {
-          // Handle both text and binary messages
-          if (typeof event.data === 'string') {
-            xtermRef.current.write(event.data);
-          } else {
-            // Handle binary data (for proper terminal escape sequences)
-            const reader = new FileReader();
-            reader.onload = () => {
-              if (reader.result && xtermRef.current) {
-                xtermRef.current.write(new Uint8Array(reader.result as ArrayBuffer));
-              }
-            };
-            reader.readAsArrayBuffer(event.data);
-          }
-        }
-      };
-
-      ws.onclose = () => {
-        setStatus('disconnected');
-        if (xtermRef.current) {
-          xtermRef.current.writeln('\r\n\x1b[1;31mDisconnected from terminal.\x1b[0m');
-        }
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setStatus('disconnected');
-        if (xtermRef.current) {
-          xtermRef.current.writeln('\r\n\x1b[1;31mError: WebSocket connection failed.\x1b[0m');
-        }
-      };
-
-      wsRef.current = ws;
+    ws.onopen = () => {
+      setStatus('connected');
+      reconnectAttemptsRef.current = 0; // Reset reconnect attempts on successful connection
+      if (xtermRef.current) {
+        xtermRef.current.writeln('\r\n\x1b[1;32mConnected to remote terminal.\x1b[0m\r\n');
+      }
     };
 
+    ws.onmessage = (event) => {
+      if (xtermRef.current) {
+        // Handle both text and binary messages
+        if (typeof event.data === 'string') {
+          xtermRef.current.write(event.data);
+        } else {
+          // Handle binary data (for proper terminal escape sequences)
+          const reader = new FileReader();
+          reader.onload = () => {
+            if (reader.result && xtermRef.current) {
+              xtermRef.current.write(new Uint8Array(reader.result as ArrayBuffer));
+            }
+          };
+          reader.readAsArrayBuffer(event.data);
+        }
+      }
+    };
+
+    ws.onclose = (event) => {
+      // Mark this as unexpected disconnection if it wasn't a manual close
+      const wasUnexpected = !event.wasClean;
+      unexpectedDisconnectRef.current = wasUnexpected;
+
+      setStatus('disconnected');
+
+      if (xtermRef.current) {
+        if (!wasUnexpected) {
+          xtermRef.current.writeln('\r\n\x1b[1;33mDisconnected from terminal.\x1b[0m');
+        } else {
+          xtermRef.current.writeln('\r\n\x1b[1;31mConnection lost unexpectedly.\x1b[0m');
+
+          // Auto-reconnect for unexpected disconnections, with limits
+          if (isConnected && reconnectAttemptsRef.current < maxReconnectAttempts) {
+            reconnectAttemptsRef.current++;
+            xtermRef.current.writeln(`\r\n\x1b[1;33mAttempting to reconnect (${reconnectAttemptsRef.current}/${maxReconnectAttempts})...\x1b[0m`);
+
+            // Use incremental backoff for reconnection attempts
+            const backoffDelay = Math.min(1000 * Math.pow(1.5, reconnectAttemptsRef.current - 1), 8000);
+
+            setTimeout(() => {
+              setReconnectTrigger(prev => prev + 1);
+            }, backoffDelay);
+          } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+            xtermRef.current.writeln('\r\n\x1b[1;31mMaximum reconnection attempts reached. Please try manual reconnect.\x1b[0m');
+          }
+        }
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      // Don't set disconnected here, let onclose handle it
+      if (xtermRef.current) {
+        xtermRef.current.writeln('\r\n\x1b[1;31mWebSocket error occurred.\x1b[0m');
+      }
+    };
+
+    wsRef.current = ws;
+  };
+
+  // Connect to WebSocket when ready and connected
+  useEffect(() => {
     connectWebSocket();
 
+    // Return cleanup function
     return () => {
       if (wsRef.current) {
+        unexpectedDisconnectRef.current = false; // Mark as expected disconnection
         wsRef.current.close();
         wsRef.current = null;
       }
     };
-  }, [webSocketUrl, isConnected, terminalReady]);
+  }, [webSocketUrl, isConnected, terminalReady, reconnectTrigger]);
 
   const disconnectTerminal = () => {
+    unexpectedDisconnectRef.current = false; // Mark as expected disconnection
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -220,19 +280,15 @@ export const XTerminal: React.FC<XTerminalProps> = ({
   };
 
   const reconnectTerminal = () => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+    if (xtermRef.current) {
+      xtermRef.current.writeln('\r\n\x1b[1;33mManually reconnecting...\x1b[0m');
     }
 
-    // Wait a moment before reconnecting
-    setTimeout(() => {
-      if (xtermRef.current) {
-        xtermRef.current.writeln('\r\n\x1b[1;33mReconnecting...\x1b[0m');
-      }
+    // Reset reconnect attempts counter for manual reconnection
+    reconnectAttemptsRef.current = 0;
 
-      // Try to reconnect - the useEffect will handle establishing the connection
-    }, 500);
+    // Increment the reconnect trigger to force the useEffect to run again
+    setReconnectTrigger(prev => prev + 1);
   };
 
   return (
