@@ -112,82 +112,47 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   // Custom code component for ReactMarkdown with proper typing
   const CodeBlock = ({ inline, className, children, ...props }: ReactMarkdownCodeComponentProps) => {
     const match = /language-(\w+)/.exec(className || '');
-    return !inline ? (
-      <SyntaxHighlighter
-        // Type assertion to avoid vscDarkPlus type errors
-        style={vscDarkPlus as Record<string, React.CSSProperties>}
-        language={match ? match[1] : ''}
-        PreTag="div"
-      >
-        {String(children).replace(/\n$/, '')}
-      </SyntaxHighlighter>
-    ) : (
-      <code className={className} {...props}>
-        {children}
-      </code>
+
+    if (inline || !match) {
+      return (
+        <code className="inline-code" {...props}>
+          {children}
+        </code>
+      );
+    }
+
+    // Ensure the content is a string
+    const codeString = Array.isArray(children)
+      ? children.join('')
+      : typeof children === 'string'
+      ? children
+      : String(children); // Fallback
+
+    return (
+        <SyntaxHighlighter
+          style={vscDarkPlus}
+          language={match[1]}
+        >
+          {codeString}
+        </SyntaxHighlighter>
     );
   };
 
+
   return (
-      <div className="flex flex-col max-h-[100vh] bg-black rounded-lg overflow-hidden">
-        <div className="p-4 bg-black border border-cyan rounded-lg">
-          <div className="flex flex-col space-y-2">
-            <div className="flex space-x-2 items-center">
-              <input
-                  type="text"
-                  value={pullModelName}
-                  onChange={(e) => setPullModelName(e.target.value)}
-                  placeholder="Model name to pull (e.g. mistral)"
-                  className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
-                  disabled={isPulling}
-              />
-              <button
-                  onClick={handlePullModel}
-                  className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm flex items-center"
-                  disabled={isPulling || !pullModelName.trim()}
-              >
-                {isPulling ? (
-                  <span className="flex items-center">
-                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Pulling...
-                  </span>
-                ) : (
-                  <>
-                    <Download className="mr-2" size={16} />
-                    Pull Model
-                  </>
-                )}
-              </button>
-            </div>
-
-            {pullStatus.type && (
-              <div className={`text-sm px-3 py-2 rounded-md ${pullStatus.type === 'success' ? 'bg-green-800 text-green-100' : 'bg-red-800 text-red-100'}`}>
-                {pullStatus.message}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="p-4 bg-black flex items-center justify-between border border-cyan rounded-lg mt-4">
-          <div className="flex items-center flex-1">
-            <select
-                value={selectedModel}
-                onChange={(e) => onModelSelect(e.target.value)}
-                className="bg-gray-700 text-white rounded-lg px-4 py-2 flex-1 max-w-xs"
-            >
-              {models.length > 0 ? (
-                  models.map((model) => (
-                      <option key={model.model} value={model.model}>
-                        {model.model}
-                      </option>
-                  ))
-              ) : (
-                  <option value="">Loading models...</option>
-              )}
-            </select>
+    <div className="flex flex-col max-h-[100vh] bg-black rounded-lg overflow-hidden">
+      {/* Pull Model section */}
+      <div className="p-4 bg-black border border-cyan rounded-lg">
+        <div className="flex flex-col space-y-2">
+          <div className="flex space-x-2 items-center">
+            <input
+              type="text"
+              value={pullModelName}
+              onChange={(e) => setPullModelName(e.target.value)}
+              placeholder="Model name to pull (e.g. mistral)"
+              className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+              disabled={isPulling}
+            />
             <button
               onClick={handlePullModel}
               className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm flex items-center"
@@ -209,6 +174,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               )}
             </button>
           </div>
+
           {pullStatus.type && (
             <div className={`text-sm px-3 py-2 rounded-md ${pullStatus.type === 'success' ? 'bg-green-800 text-green-100' : 'bg-red-800 text-red-100'}`}>
               {pullStatus.message}
@@ -217,7 +183,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </div>
       </div>
 
-      <div className="p-4 bg-gray-800 flex items-center justify-between border-b border-gray-700">
+      {/* Model selector and controls */}
+      <div className="p-4 bg-black flex items-center justify-between border border-cyan rounded-lg mt-4">
         <div className="flex items-center flex-1">
           <select
             value={selectedModel}
@@ -265,96 +232,96 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             {showDebugPanel ? 'Hide Debug' : 'Show Debug'}
           </button>
         </div>
-        <button
-          onClick={onClearChat}
-          className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center ml-2"
-        >
-          <Trash2 className="mr-2" size={18}/>
-          Clear Chat
-        </button>
       </div>
-      <h1 className="text-2xl font-bold text-white text-left mt-20">Chat Interface</h1>
-      <div className="bg-gray-900 flex-grow min-h-0 overflow-y-auto p-4 space-y-4 chat-container mt-5 rounded-lg border border-cyan">
-        {chatHistory.length > 0 ? (
-            chatHistory.map((msg, index) => {
-              // Only show user and assistant messages in main chat
-              if (msg.role !== 'user' && msg.role !== 'assistant') {
-                return null;
-              }
 
-              return (
-                  <div
-                      key={index}
-                      className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                        className={`max-w-[80%] rounded-lg p-3 ${
-                            msg.role === 'user'
-                                ? 'bg-bgCyan text-black'
-                                : 'bg-gray-700 text-bgCyan'
-                        }`}
-                    >
-                      <p className="text-sm font-semibold mb-1">
-                        {msg.role === 'user' ? 'You' : '🤖 Assistant'}
-                      </p>
-                      {msg.role === 'assistant' && msg.isMarkdown ? (
-                        // Use ReactMarkdown for completed messages
-                        <div className="markdown-content">
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              // Using type assertion with more specific type instead of 'any'
-                              code: CodeBlock as React.ComponentType<React.ClassAttributes<HTMLElement> & React.HTMLAttributes<HTMLElement>>
-                            }}
-                          >
-                            {msg.content}
-                          </ReactMarkdown>
-                        </div>
-                      ) : (
-                        // Use the same whitespace handling as the debug panel
-                        <div className="text-white whitespace-pre-wrap">
-                          {msg.content}
-                        </div>
-                      )}
+      {/* Chat heading */}
+      <h1 className="text-2xl font-bold text-white text-left mt-4">Chat Interface</h1>
+
+      {/* Chat messages container */}
+      <div className="bg-gray-900 flex-1 overflow-y-auto p-4 space-y-4 chat-container mt-5 rounded-lg border border-cyan">
+        {chatHistory.length > 0 ? (
+          chatHistory.map((msg, index) => {
+            // Only show user and assistant messages in main chat
+            if (msg.role !== 'user' && msg.role !== 'assistant') {
+              return null;
+            }
+
+            return (
+              <div
+                key={index}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div
+                  className={`max-w-[80%] rounded-lg p-3 ${
+                    msg.role === 'user'
+                      ? 'bg-bgCyan text-black'
+                      : 'bg-gray-700 text-bgCyan'
+                  }`}
+                >
+                  <p className="text-sm font-semibold mb-1">
+                    {msg.role === 'user' ? 'You' : '🤖 Assistant'}
+                  </p>
+                  {msg.role === 'assistant' && msg.isMarkdown ? (
+                    // Use ReactMarkdown for completed messages
+                    <div className="markdown-content">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          // Using type assertion with more specific type instead of 'any'
+                          code: CodeBlock as React.ComponentType<React.ClassAttributes<HTMLElement> & React.HTMLAttributes<HTMLElement>>
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
                     </div>
-                  </div>
-              );
-            })
+                  ) : (
+                    // Use the same whitespace handling as the debug panel
+                    <div className="text-white whitespace-pre-wrap">
+                      {msg.content}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })
         ) : (
-            <div className="flex justify-center items-center h-full text-gray-500">
-              No messages yet. Start a conversation!
-            </div>
+          <div className="flex justify-center items-center h-20 text-gray-500 select-none">
+            No messages yet. Start a conversation!
+          </div>
         )}
         <div ref={chatEndRef}/>
-      </div>
-      <form onSubmit={handleSubmit} className="p-4 bg-gray-800 border-t border-gray-700">
-        <div className="flex space-x-2">
-          <input
-            type="text"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            placeholder="Ask about security tools, techniques or concepts..."
-            className="flex-1 bg-gray-700 text-white rounded-lg px-4 py-2"
-            disabled={isStreaming}
-          />
-          <button
-            type="submit"
-            className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-cyan hover:bg-bgCyan hover:text-white text-black w-8 h-8 rounded-full flex items-center justify-center"
-            disabled={!message.trim() || isStreaming}
-          >
-            <ArrowUp size={18} />
+          {/* Message input form */}
+          <form onSubmit={handleSubmit} className="p-4">
+            <div className="flex space-x-2">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  placeholder="Ask about security tools, techniques or concepts..."
+                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 pr-12"
+                  disabled={isStreaming}
+                />
+                <button
+                  type="submit"
+                  className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-cyan hover:bg-bgCyan hover:text-white text-black w-8 h-8 rounded-full flex items-center justify-center"
+                  disabled={!message.trim() || isStreaming}
+                >
+                  <ArrowUp size={18} />
                 </button>
               </div>
               <button
+                type="button"
                 onClick={onClearChat}
                 className="bg-red-600 hover:bg-white hover:text-red-600 text-white w-10 h-10 rounded-full flex items-center justify-center"
                 aria-label="Clear chat"
                 title="Clear chat"
               >
-                <Trash2 className="" size={18} />
+                <Trash2 size={18} />
               </button>
-        </div>
-      </form>
+            </div>
+          </form>
+      </div>
     </div>
   );
 };
