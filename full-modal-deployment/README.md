@@ -48,7 +48,7 @@ Run the following command from your terminal to deploy your Ollama server to Mod
 modal deploy ollama_server.py
 ```
 
-> [!INFO]
+> [!NOTE]
 > You can set your GPU configuration in `ollama_server.py` by changing `GPU = "T4"`(cheapest GPU) to something faster such as `GPU = "A10G"`(will be a little bit more expensive).
 
 ### Step 5: Create Environment File
