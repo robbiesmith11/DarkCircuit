@@ -150,7 +150,7 @@ def close_ssh_connection():
     scaledown_window=15 * MINUTES,
     min_containers=1,
     max_containers=1,
-    secrets=[modal.Secret.from_name("OpenAI-secret")]
+    secrets=[modal.Secret.from_name("openai-secret")]
 )
 @modal.asgi_app()
 def App():

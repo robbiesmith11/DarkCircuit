@@ -39,7 +39,10 @@ Install npm dependencies for frontend:
 cd frontend && npm install && cd ..
 ```
 
-### Step 4: Deploy Ollama Server
+### Step 4: Deploy Ollama Server (Optional)
+> [!CAUTION]
+> App currently isn't using the Ollama server so this step isn't necessary at the moment. However, if this step is skipped you will see errors relating to the Ollama server which you can ignore. Eventually we may get the agent using the Ollama server in which case this would be a required step.
+
 Run the following command from your terminal to deploy your Ollama server to Modal:
 ```bash
 modal deploy ollama_server.py
@@ -61,19 +64,29 @@ echo 'VITE_BACKEND_API_URL=https://<replace-with-workspace-name>--darkcircuit-ap
 echo 'VITE_TERMINAL_WS_URL=wss://<replace-with-workspace-name>--darkcircuit-app.modal.run' >> frontend/.env
 ```
 
-### Step 6: Build Frontend
+### Step 6: Create OpenAI API Secret on Modal
+> [!CAUTION]
+> App can run without performing this step but the user won't be able to use the LLM side.
+1. In the top left corner of your Modal dashboard select `Secrets`.
+2. Click `Create new secret` button.
+3. Under `Choose Type` select `OpenAI`.
+![Create Modal OpenAI API Secret](modal_openai_secret.png)
+4. Paste OpenAI API key in the `Value` field and click `Done` button.
+
+
+### Step 7: Build Frontend
 Run the following command to build React frontend:
 ```bash
 cd frontend && npm run build && cd ..
 ```
 
-### Step 7: Deploy DarkCircuit App
+### Step 8: Deploy DarkCircuit App
 Run the following command from your terminal to deploy your DarkCircuit app to Modal:
 ```bash
 modal deploy darkcircuit_app_win.py
 ```
 
-### Step 8: Connect to HackTheBox
+### Step 9: Connect to HackTheBox
 ![Click on connect using Pwnbox.](starting_point.png)
 
 1. Go to [HackTheBox](https://app.hackthebox.com/starting-point) platform, navigate to `Starting Point`, and select a challenge.
@@ -85,7 +98,7 @@ modal deploy darkcircuit_app_win.py
 > The HTB Free Plan only provides 2 hrs of Pwnbox usage so be diligent about terminating the instance when you are finished using it.
 
 > [!TIP]
-> You can receive **unlimited** Pwnbox usage with a [Student Subscription](https://help.hackthebox.com/en/articles/5720974-academy-subscriptions) at a discounted price of $8/month (USD). Details on how to obtain a Student Subscription are found [here](https://help.hackthebox.com/en/articles/7973133-getting-the-student-subscription).
+> You can receive **24 hours per month** of Pwnbox usage with a [VIP subscription](https://app.hackthebox.com/vip) or **Unlimited hours** of Pwnbox usage with a [VIP+ subscription](https://app.hackthebox.com/vip). **Make sure to click the billed monthly toggle or you will be charged for annual billing!**
 
 ![Confirm `INSTANCE LIFETIME` has started.](pwnbox_started.png)
 

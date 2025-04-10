@@ -211,7 +211,7 @@ class ModalOllamaChatModel(BaseChatModel, Runnable):
     image=app_image.add_local_dir("frontend/dist", remote_path="/assets"),
     timeout=30*MINUTES,
     scaledown_window=15*MINUTES,
-    secrets=[modal.Secret.from_name("OpenAI-secret")]
+    secrets=[modal.Secret.from_name("openai-secret")]
 )
 @modal.asgi_app()
 def App():
