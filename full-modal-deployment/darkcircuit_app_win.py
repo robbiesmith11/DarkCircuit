@@ -498,4 +498,7 @@ def App():
             media_type="text/event-stream"
         )
 
+    # Static files
+    fastapi_app.mount("/", StaticFiles(directory="/assets", html=True), name="frontend")
+
     return fastapi_app
