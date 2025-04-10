@@ -1,5 +1,6 @@
 modal
 paramiko
+websockets
 langchain_openai
 langchain_community
 langgraph
