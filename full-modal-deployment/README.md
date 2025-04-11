@@ -83,7 +83,7 @@ cd frontend && npm run build && cd ..
 ### Step 8: Deploy DarkCircuit App
 Run the following command from your terminal to deploy your DarkCircuit app to Modal:
 ```bash
-modal deploy darkcircuit_app_win.py
+modal deploy darkcircuit_app.py
 ```
 
 ### Step 9: Connect to HackTheBox
