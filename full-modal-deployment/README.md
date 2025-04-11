@@ -58,10 +58,10 @@ modal deploy ollama_server.py
 
 2. Insert name where it is indicated on each line in the command below:
 ```bash
-echo 'VITE_BACKEND_API_URL=https://<replace-with-workspace-name>--darkcircuit-app.modal.run' > frontend/.env
+echo 'VITE_BACKEND_API_URL=https://<replace-with-workspace-name>--darkcircuit-app-serve.modal.run' > frontend/.env
 ```
 ```bash
-echo 'VITE_TERMINAL_WS_URL=wss://<replace-with-workspace-name>--darkcircuit-app.modal.run' >> frontend/.env
+echo 'VITE_TERMINAL_WS_URL=wss://<replace-with-workspace-name>--darkcircuit-app-serve.modal.run' >> frontend/.env
 ```
 
 ### Step 6: Create OpenAI API Secret on Modal
