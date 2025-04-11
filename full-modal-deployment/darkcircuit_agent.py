@@ -1,6 +1,5 @@
 import os
 import asyncio
-import uuid
 import paramiko
 from langchain_openai import ChatOpenAI
 from langchain_community.tools import DuckDuckGoSearchRun
@@ -9,6 +8,7 @@ from langgraph.prebuilt import ToolNode
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_core.callbacks.base import BaseCallbackHandler
+import json
 
 MessagesState = dict
 
@@ -37,14 +37,30 @@ class StreamingHandler(BaseCallbackHandler):
         # When a tool starts, we should flush any thinking buffer
         await self._flush_thinking_buffer()
 
-        tool_name = getattr(tool, "name", str(tool))
-        print(f"[StreamingHandler] Starting tool: {tool_name} with input: {input_str}")
+        # Tool is already a dictionary, so we can access it directly
+        tool_name = tool.get('name', 'unknown_tool')
+        tool_description = tool.get('description', 'unknown')
+
+        # Convert input_str from Python dict-like string to actual dict
+        command = input_str
+        try:
+            # This is a safer approach to convert a Python dict string to a dict
+            import ast
+            input_dict = ast.literal_eval(input_str)
+            if isinstance(input_dict, dict) and 'command' in input_dict:
+                command = input_dict['command']
+        except:
+            # If parsing fails, keep the original string
+            pass
+
+        print(f"[StreamingHandler] Starting tool: {tool_name} with input: {command}")
 
         # Standardize the format for tool calls
         await self.queue.put({
             "type": "tool_call",
             "name": tool_name,
-            "input": input_str
+            "description": tool_description,
+            "input": command
         })
 
     async def on_tool_end(self, output, **kwargs):
@@ -91,11 +107,11 @@ class StreamingHandler(BaseCallbackHandler):
 
 
 class Darkcircuit_Agent:
-    def __init__(self, client=None):
+    def __init__(self):
         api_key = os.environ["OPENAI_API_KEY"]
 
         self.llm = ChatOpenAI(model="gpt-4o-mini", streaming=True, api_key=api_key)
-        self.ssh_client = client
+        self.ssh_client = None
         self.streaming_handler = None
 
         self.search = DuckDuckGoSearchRun()
@@ -103,13 +119,28 @@ class Darkcircuit_Agent:
         @tool
         def run_command(command: str) -> str:
             """Execute a command on the remote SSH server"""
-            if self.ssh_client is None:
-                return "Error: SSH client not connected"
             try:
-                stdin, stdout, stderr = self.ssh_client.exec_command(command, timeout=30)
-                output = stdout.read().decode('utf-8', errors='replace')
-                error = stderr.read().decode('utf-8', errors='replace')
-                return f"Output:\n{output}\n\nErrors:\n{error}" if error else output
+                self._establish_ssh_connection()
+                if not self.ssh_client:
+                    return "Error: No SSH connection. Please connect first."
+
+                # Execute the command
+                transport = self.ssh_client.get_transport()
+                chan = transport.open_session()
+                chan.exec_command(command)
+
+                # Read output as bytes
+                stdout_bytes = chan.makefile("r").read()
+                stderr_bytes = chan.makefile_stderr("r").read()
+                chan.close()
+
+                # Decode bytes to UTF-8 strings with error handling
+                stdout = stdout_bytes.decode('utf-8', errors='replace') if isinstance(stdout_bytes,
+                                                                                      bytes) else stdout_bytes
+                stderr = stderr_bytes.decode('utf-8', errors='replace') if isinstance(stderr_bytes,
+                                                                                      bytes) else stderr_bytes
+
+                return stdout + stderr
             except Exception as e:
                 return f"Error executing command: {str(e)}"
 
@@ -145,6 +176,50 @@ class Darkcircuit_Agent:
         builder.add_edge("responder", END)
 
         self.react_graph = builder.compile()
+
+    def _establish_ssh_connection(self):
+        try:
+            # Load connection parameters from the volume
+            with open("/ssh_data/connection_params.json", "r") as f:
+                conn_params = json.load(f)
+
+            # Establish a fresh connection
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+            # Connect using saved parameters
+            connect_kwargs = {
+                'hostname': conn_params["host"],
+                'port': conn_params["port"],
+                'username': conn_params["username"],
+                'timeout': 10,
+                'banner_timeout': 15,
+                'allow_agent': False,
+                'look_for_keys': False
+            }
+
+            # Add auth method
+            if conn_params.get("key_path"):
+                if conn_params.get("password"):
+                    key = paramiko.RSAKey.from_private_key_file(
+                        conn_params["key_path"],
+                        password=conn_params["password"]
+                    )
+                    connect_kwargs['pkey'] = key
+                else:
+                    connect_kwargs['key_filename'] = conn_params["key_path"]
+            else:
+                connect_kwargs['password'] = conn_params["password"]
+
+            client.connect(**connect_kwargs)
+
+            # Save the client
+            self.ssh_client = client
+
+            return True
+        except Exception as e:
+            print(f"Error establishing SSH connection: {e}")
+            return False
 
     async def reasoner(self, state: MessagesState):
         print("[Agent] Entering reasoner node with message count:", len(state["messages"]))
@@ -358,7 +433,3 @@ class Darkcircuit_Agent:
                 yield event
         finally:
             await graph_task
-
-    def __del__(self):
-        if self.ssh_client:
-            self.ssh_client.close()
