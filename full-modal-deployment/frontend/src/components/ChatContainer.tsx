@@ -6,7 +6,12 @@ import { DebugPanel } from './DebugPanel';
 
 const BACKEND_API = import.meta.env.VITE_BACKEND_API_URL || '';
 
-export const ChatContainer = () => {
+// Add a new onSshToolCall prop to receive execute command function
+interface ChatContainerProps {
+  onSshToolCall?: (command: string) => void;
+}
+
+export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) => {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
@@ -98,12 +103,13 @@ export const ChatContainer = () => {
             // Log actual structure of the event to help with debugging
             console.log("Event structure:", Object.keys(parsed));
 
-            // Handle standardized tool calls - only add to debug panel
+            // Handle standardized tool calls - add to debug panel and check for SSH commands
             if (parsed.type === 'tool_call') {
               console.log("💥 TOOL CALL DETECTED:", parsed);
 
               // Extract tool name and input with proper fallbacks
               const toolName = parsed.name || 'unnamed tool';
+              const toolDesc = parsed.description || 'unnamed';
               const toolInput = typeof parsed.input === 'string'
                 ? parsed.input
                 : JSON.stringify(parsed.input, null, 2);
@@ -112,8 +118,19 @@ export const ChatContainer = () => {
               setDebugEvents(prev => [...prev, {
                 type: 'tool_call',
                 timestamp: new Date(),
-                content: `Tool: ${toolName}\nInput: ${toolInput}`
+                content: `Tool: ${toolName}\nDescription: ${toolDesc}\nInput: ${toolInput}`
               }]);
+
+              // Check if this is an SSH command tool call
+              if (toolName === 'run_command') {
+                if (onSshToolCall && typeof toolInput === 'string') {
+                  // Execute the command in the terminal
+                  onSshToolCall(toolInput);
+
+                } else {
+                  console.warn('SSH tool call received but onSshToolCall not provided or input is not a string');
+                }
+              }
             }
 
             // Handle standardized tool results - only add to debug panel

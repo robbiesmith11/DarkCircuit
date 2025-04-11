@@ -37,14 +37,30 @@ class StreamingHandler(BaseCallbackHandler):
         # When a tool starts, we should flush any thinking buffer
         await self._flush_thinking_buffer()
 
-        tool_name = getattr(tool, "name", str(tool))
-        print(f"[StreamingHandler] Starting tool: {tool_name} with input: {input_str}")
+        # Tool is already a dictionary, so we can access it directly
+        tool_name = tool.get('name', 'unknown_tool')
+        tool_description = tool.get('description', 'unknown')
+
+        # Convert input_str from Python dict-like string to actual dict
+        command = input_str
+        try:
+            # This is a safer approach to convert a Python dict string to a dict
+            import ast
+            input_dict = ast.literal_eval(input_str)
+            if isinstance(input_dict, dict) and 'command' in input_dict:
+                command = input_dict['command']
+        except:
+            # If parsing fails, keep the original string
+            pass
+
+        print(f"[StreamingHandler] Starting tool: {tool_name} with input: {command}")
 
         # Standardize the format for tool calls
         await self.queue.put({
             "type": "tool_call",
             "name": tool_name,
-            "input": input_str
+            "description": tool_description,
+            "input": command
         })
 
     async def on_tool_end(self, output, **kwargs):

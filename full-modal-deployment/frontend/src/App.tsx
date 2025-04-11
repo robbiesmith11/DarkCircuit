@@ -98,6 +98,16 @@ function App() {
     }
   };
 
+  // Function to handle SSH commands from the ChatContainer
+  const handleSshToolCall = (command: string) => {
+    if (isSshConnected && executeCommandRef.current) {
+      executeCommandRef.current(command);
+    } else {
+      // If not connected, show a toast warning
+      toast.warning('Terminal not connected. Please connect SSH to execute commands.');
+    }
+  };
+
   const registerExecuteCommand = (fn: (command: string) => void) => {
     executeCommandRef.current = fn;
   };
@@ -133,7 +143,8 @@ function App() {
       <div className="flex-1 p-4 overflow-auto">
         <div className="grid grid-cols-2 gap-4 h-full">
           <div className="space-y-4 h-full">
-            <ChatContainer />
+            {/* Pass the SSH command handler to ChatContainer */}
+            <ChatContainer onSshToolCall={handleSshToolCall} />
           </div>
           <div className="flex flex-col space-y-4 h-full">
             {/* SSH Connection Form or Terminal */}
