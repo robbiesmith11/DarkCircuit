@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, ComponentPropsWithoutRef } from 'react';
-import { ArrowUp, Trash2, Download, Terminal } from 'lucide-react';
+import { ArrowUp, Trash2, Terminal, Settings } from 'lucide-react';
 import { ChatMessage, Model } from '../types';
-// Import ReactMarkdown and necessary plugins
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -47,10 +46,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [pullModelName, setPullModelName] = useState('');
   const [isPulling, setIsPulling] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [pullStatus, setPullStatus] = useState<{type: 'success' | 'error' | null, message: string}>({
+  const [pullStatus, setPullStatus] = useState<{ type: 'success' | 'error' | null; message: string }>({
     type: null,
     message: ''
   });
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -68,7 +68,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (!pullModelName.trim()) return;
 
     setIsPulling(true);
-    setPullStatus({type: null, message: ''});
+    setPullStatus({ type: null, message: '' });
 
     try {
       await onModelPull(pullModelName);
@@ -103,7 +103,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   useEffect(() => {
     if (pullStatus.type === 'success') {
       const timer = setTimeout(() => {
-        setPullStatus({type: null, message: ''});
+        setPullStatus({ type: null, message: '' });
       }, 5000);
       return () => clearTimeout(timer);
     }
@@ -129,110 +129,109 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       : String(children); // Fallback
 
     return (
-        <SyntaxHighlighter
-          style={vscDarkPlus}
-          language={match[1]}
-        >
-          {codeString}
-        </SyntaxHighlighter>
+      <SyntaxHighlighter style={vscDarkPlus} language={match[1]}>
+        {codeString}
+      </SyntaxHighlighter>
     );
   };
 
-
   return (
     <div className="flex flex-col max-h-[100vh] bg-black rounded-lg overflow-hidden">
-      {/* Pull Model section */}
-      <div className="p-4 bg-black border border-cyan rounded-lg">
-        <div className="flex flex-col space-y-2">
-          <div className="flex space-x-2 items-center">
-            <input
-              type="text"
-              value={pullModelName}
-              onChange={(e) => setPullModelName(e.target.value)}
-              placeholder="Model name to pull (e.g. mistral)"
-              className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
-              disabled={isPulling}
-            />
-            <button
-              onClick={handlePullModel}
-              className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm flex items-center"
-              disabled={isPulling || !pullModelName.trim()}
-            >
-              {isPulling ? (
-                <span className="flex items-center">
-                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Pulling...
-                </span>
-              ) : (
-                <>
-                  <Download className="mr-2" size={16} />
-                  Pull Model
-                </>
+      <div className="p-4 bg-black flex items-center justify-between border border-cyan rounded-lg">
+
+        <button
+          onClick={onToggleDebug}
+          className={`bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-lg text-sm flex items-center ${
+            showDebugPanel ? 'bg-green-600' : ''
+          }`}
+        >
+          <Terminal className="mr-2" size={16} />
+          {showDebugPanel ? 'Hide Debug' : 'Show Debug'}
+        </button>
+
+        <button
+          onClick={() => setIsModalOpen(true)}
+          className="bg-cyan hover:bg-bgCyan text-Black px-3 py-2 rounded-lg text-sm flex items-center"
+        >
+          <Settings className="mr-2" size={16} />
+          Models Control
+        </button>
+      </div>
+
+      {/* Modal for Utilities */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+          <div className="bg-gray-800 p-6 rounded-lg w-96">
+            <h2 className="text-lg font-bold text-white mb-4">Models Control</h2>
+
+            {/* Pull Model Section */}
+            <div className="flex flex-col space-y-2 mb-4">
+              <div className="flex space-x-2 items-center">
+                <input
+                  type="text"
+                  value={pullModelName}
+                  onChange={(e) => setPullModelName(e.target.value)}
+                  placeholder="Model name to pull (e.g. mistral)"
+                  className="flex-1 bg-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+                  disabled={isPulling}
+                />
+                <button
+                  onClick={handlePullModel}
+                  className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm flex items-center"
+                  disabled={isPulling || !pullModelName.trim()}
+                >
+                  {isPulling ? 'Pulling...' : 'Pull Model'}
+                </button>
+              </div>
+
+              {pullStatus.type && (
+                <div
+                  className={`text-sm px-3 py-2 rounded-md ${
+                    pullStatus.type === 'success'
+                      ? 'bg-green-800 text-green-100'
+                      : 'bg-red-800 text-red-100'
+                  }`}
+                >
+                  {pullStatus.message}
+                </div>
               )}
+            </div>
+
+            <div className="flex items-center">
+              <select
+                value={selectedModel}
+                onChange={(e) => onModelSelect(e.target.value)}
+                className="bg-gray-700 text-white rounded-lg px-4 py-2 flex-1 max-w-xs"
+              >
+                {models.length > 0 ? (
+                  models.map((model) => (
+                    <option key={model.model} value={model.model}>
+                      {model.model}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">Loading models...</option>
+                )}
+              </select>
+              <button
+                onClick={handleDeleteModel}
+                className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-lg text-sm ml-2 flex items-center"
+                disabled={!selectedModel || isDeleting}
+              >
+                {isDeleting ? 'Deleting...' : 'Delete Model'}
+              </button>
+            </div>
+
+            {/* Close Modal Button */}
+            <button
+              onClick={() => setIsModalOpen(false)}
+              className="mt-4 bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg text-sm"
+            >
+              Close
             </button>
           </div>
-
-          {pullStatus.type && (
-            <div className={`text-sm px-3 py-2 rounded-md ${pullStatus.type === 'success' ? 'bg-green-800 text-green-100' : 'bg-red-800 text-red-100'}`}>
-              {pullStatus.message}
-            </div>
-          )}
         </div>
-      </div>
-
-      {/* Model selector and controls */}
-      <div className="p-4 bg-black flex items-center justify-between border border-cyan rounded-lg mt-4">
-        <div className="flex items-center flex-1">
-          <select
-            value={selectedModel}
-            onChange={(e) => onModelSelect(e.target.value)}
-            className="bg-gray-700 text-white rounded-lg px-4 py-2 flex-1 max-w-xs"
-          >
-            {models.length > 0 ? (
-              models.map((model) => (
-                <option key={model.model} value={model.model}>
-                  {model.model}
-                </option>
-              ))
-            ) : (
-              <option value="">Loading models...</option>
-            )}
-          </select>
-          <button
-            onClick={handleDeleteModel}
-            className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded-lg text-sm ml-2 flex items-center"
-            disabled={!selectedModel || isDeleting}
-          >
-            {isDeleting ? (
-              <span className="flex items-center">
-                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Deleting...
-              </span>
-            ) : (
-              <>
-                <Trash2 className="mr-2" size={16} />
-                Delete Model
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={onToggleDebug}
-            className={`ml-2 px-3 py-2 rounded-lg text-sm ${
-              showDebugPanel ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-gray-600 hover:bg-gray-700'
-            } text-white flex items-center`}
-          >
-            <Terminal className="mr-2" size={16} />
-            {showDebugPanel ? 'Hide Debug' : 'Show Debug'}
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* Chat heading */}
       <h1 className="text-2xl font-bold text-white text-left mt-4">Chat Interface</h1>
@@ -289,38 +288,38 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             No messages yet. Start a conversation!
           </div>
         )}
-        <div ref={chatEndRef}/>
-          {/* Message input form */}
-          <form onSubmit={handleSubmit} className="p-4">
-            <div className="flex space-x-2">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  placeholder="Ask about security tools, techniques or concepts..."
-                  className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 pr-12"
-                  disabled={isStreaming}
-                />
-                <button
-                  type="submit"
-                  className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-cyan hover:bg-bgCyan hover:text-white text-black w-8 h-8 rounded-full flex items-center justify-center"
-                  disabled={!message.trim() || isStreaming}
-                >
-                  <ArrowUp size={18} />
-                </button>
-              </div>
+        <div ref={chatEndRef} />
+        {/* Message input form */}
+        <form onSubmit={handleSubmit} className="p-4">
+          <div className="flex space-x-2">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Ask about security tools, techniques or concepts..."
+                className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 pr-12"
+                disabled={isStreaming}
+              />
               <button
-                type="button"
-                onClick={onClearChat}
-                className="bg-red-600 hover:bg-white hover:text-red-600 text-white w-10 h-10 rounded-full flex items-center justify-center"
-                aria-label="Clear chat"
-                title="Clear chat"
+                type="submit"
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-cyan hover:bg-bgCyan hover:text-white text-black w-8 h-8 rounded-full flex items-center justify-center"
+                disabled={!message.trim() || isStreaming}
               >
-                <Trash2 size={18} />
+                <ArrowUp size={18} />
               </button>
             </div>
-          </form>
+            <button
+              type="button"
+              onClick={onClearChat}
+              className="bg-red-600 hover:bg-white hover:text-red-600 text-white w-10 h-10 rounded-full flex items-center justify-center"
+              aria-label="Clear chat"
+              title="Clear chat"
+            >
+              <Trash2 size={18} />
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
