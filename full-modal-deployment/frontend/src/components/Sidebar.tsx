@@ -40,13 +40,7 @@ export const Sidebar: React.FC<SimplifiedSidebarProps> = ({
 
       {!isCollapsed && (
         <>
-          <div className="mb-8 border border-cyan rounded-lg p-3">
-            <h2 className="text-xl font-semibold mb-4">Connect to External Container</h2>
-            <h2 className="text-xl font-semibold mb-4">DarkCircuit</h2>
-            <div className="bg-gray-700 text-white px-4 py-2 rounded-lg">
-              <p className="text-sm">Connect to your external server using the SSH form.</p>
-            </div>
-          </div>
+        
 
           <div className="mb-8 border border-cyan rounded-lg p-3">
             <h2 className="text-xl font-semibold mb-4">Container Services</h2>

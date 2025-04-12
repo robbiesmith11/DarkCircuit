@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, ComponentPropsWithoutRef } from 'react';
-import { ArrowUp, Trash2, Terminal, Settings } from 'lucide-react';
+import { ArrowUp, Trash2, Terminal, Settings, ArrowDown } from 'lucide-react';
 import { ChatMessage, Model } from '../types';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -135,29 +135,39 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     );
   };
 
+  // Scroll to bottom when the user scrolls up
+  const [isScrolledUp, setIsScrolledUp] = useState(false);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const chatContainer = chatContainerRef.current;
+
+    const handleScroll = () => {
+      if (chatContainer) {
+        const isAtBottom =
+          chatContainer.scrollHeight - chatContainer.scrollTop === chatContainer.clientHeight;
+        setIsScrolledUp(!isAtBottom);
+      }
+    };
+
+    if (chatContainer) {
+      chatContainer.addEventListener('scroll', handleScroll);
+    }
+
+    return () => {
+      if (chatContainer) {
+        chatContainer.removeEventListener('scroll', handleScroll);
+      }
+    };
+  }, []);
+
+  const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+
   return (
     <div className="flex flex-col max-h-[100vh] bg-black rounded-lg overflow-hidden">
-      <div className="p-4 bg-black flex items-center justify-between border border-cyan rounded-lg">
-
-        <button
-          onClick={onToggleDebug}
-          className={`bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-lg text-sm flex items-center ${
-            showDebugPanel ? 'bg-green-600' : ''
-          }`}
-        >
-          <Terminal className="mr-2" size={16} />
-          {showDebugPanel ? 'Hide Debug' : 'Show Debug'}
-        </button>
-
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="bg-cyan hover:bg-bgCyan text-Black px-3 py-2 rounded-lg text-sm flex items-center"
-        >
-          <Settings className="mr-2" size={16} />
-          Models Control
-        </button>
-      </div>
-
       {/* Modal for Utilities */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
@@ -233,11 +243,22 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </div>
       )}
 
-      {/* Chat heading */}
-      <h1 className="text-2xl font-bold text-white text-left mt-4">Chat Interface</h1>
-
+        {/* Chat heading and Models Control button */}
+        <div className="flex items-center justify-between mt-4">
+          <h1 className="text-2xl font-bold text-white">Chat Interface</h1>
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="bg-cyan hover:bg-bgCyan text-Black px-3 py-2 rounded-lg text-sm flex items-center"
+          >
+            <Settings className="mr-2" size={16} />
+            Models Control
+          </button>
+        </div>
       {/* Chat messages container */}
-      <div className="bg-gray-900 flex-1 overflow-y-auto p-4 space-y-4 chat-container mt-5 rounded-lg border border-cyan">
+      <div
+        ref={chatContainerRef} // Attach the ref to the chat container
+
+       className="bg-gray-900 flex-1 overflow-y-auto p-4 space-y-4 chat-container mt-5 rounded-lg border border-cyan relative">
         {chatHistory.length > 0 ? (
           chatHistory.map((msg, index) => {
             // Only show user and assistant messages in main chat
@@ -289,8 +310,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
         )}
         <div ref={chatEndRef} />
+
+        {isScrolledUp && (
+          <button
+            onClick={scrollToBottom}
+            className="sticky bottom-[6rem] left-1/2 transform -translate-x-1/2 bg-cyan text-black w-8 h-16 rounded-full shadow-lg hover:bg-bgCyan flex items-center justify-center"
+            aria-label="Scroll to bottom"
+            title="Scroll to bottom"
+          >
+            <ArrowDown size={16} />
+          </button>
+        )}
+
         {/* Message input form */}
-        <form onSubmit={handleSubmit} className="p-4">
+        <form onSubmit={handleSubmit} className="p-4 sticky bottom-0  rounded-lg bg-chat">
           <div className="flex space-x-2">
             <div className="relative flex-1">
               <input
@@ -317,6 +350,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               title="Clear chat"
             >
               <Trash2 size={18} />
+            </button>
+            <button
+              onClick={onToggleDebug}
+              className={`bg-green-600 hover:bg-green-800 text-white px-3 py-2 rounded-lg text-sm flex items-center ${
+                showDebugPanel ? 'bg-green-600' : ''
+              }`}
+            >
+              <Terminal className="mr-2" size={16} />
+              {showDebugPanel ? 'Hide Debug' : 'Show Debug'}
             </button>
           </div>
         </form>
