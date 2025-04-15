@@ -44,6 +44,7 @@ export const SSHConnectForm: React.FC<SSHConnectProps> = ({
   };
 
   return (
+    
     <div className="bg-gray-800 rounded-lg p-4 shadow-md border border-cyan">
       <h2 className="text-xl text-white mb-4 flex items-center">
         <Server className="mr-2" size={20} />
