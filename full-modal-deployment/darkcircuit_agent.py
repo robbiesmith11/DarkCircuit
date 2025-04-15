@@ -10,6 +10,10 @@ from langchain_core.tools import tool
 from langchain_core.callbacks.base import BaseCallbackHandler
 import json
 
+from Rag_tool import *
+
+from sqlalchemy.testing.suite.test_reflection import metadata
+
 MessagesState = dict
 
 
@@ -117,8 +121,26 @@ class Darkcircuit_Agent:
         self.search = DuckDuckGoSearchRun()
 
         @tool
+        def rag_retrieve(query: str) -> str:
+            """Search for relevant documents included are writeups from hack the box challenges using RAG"""
+            retriever = load_static_rag_context()
+            docs = retriever.get_relevant_documents(query)
+            content_parts = []
+            for i, doc in enumerate(docs):
+                metadata = doc.metadata
+                content_parts.append(f"[Source {i+1}] {doc.page_content}")
+            return "\n\n".join(content_parts)
+
+
+
+
+        @tool
         def run_command(command: str) -> str:
-            """Execute a command on the remote SSH server"""
+            """Execute a command on the remote SSH server
+
+            Do not run commands that will run forever such as ping commands
+
+            """
             try:
                 self._establish_ssh_connection()
                 if not self.ssh_client:
@@ -145,7 +167,8 @@ class Darkcircuit_Agent:
                 return f"Error executing command: {str(e)}"
 
         self.run_command = run_command
-        self.tools = [self.search, self.run_command]
+        self.rag_retrieve = rag_retrieve
+        self.tools = [self.search, self.run_command, self.rag_retrieve]
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
         self.reasoning_prompt = SystemMessage(content="""You are a multi-step problem solver. Always follow this pattern:
