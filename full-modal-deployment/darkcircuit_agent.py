@@ -138,7 +138,10 @@ class Darkcircuit_Agent:
         def run_command(command: str) -> str:
             """Execute a command on the remote SSH server
 
-            Do not run commands that will run forever such as ping commands
+             WARNING:
+                - Do not run commands that can hang or run indefinitely (e.g., 'ping', 'tail -f', etc.).
+                - If you need to test connectivity (e.g., ping), limit it to 4 packets: use 'ping -c 4 <host>'.
+
 
             """
             try:
@@ -183,6 +186,17 @@ class Darkcircuit_Agent:
         - Do NOT output the final answer here - only think through the steps.
         - Do NOT repeat the instructions or the 'Ready to answer' phrase when outlining your approach.
         - If you need to use a tool, clearly indicate which tool you want to use and what input you're providing.
+        - Avoid repeating tool actions indefinitely. If a tool result is unclear or incomplete after 3 tries, stop and respond.
+        - If a command might run forever (like 'ping'), make sure it has a limit (e.g., 'ping -c 4').
+
+        Hack The Box Challenges:
+        - If the user asks to analyze, enumerate, or exploit a Hack The Box machine (e.g., "Start on Dancing at <target_ip>"):
+            - Use your own knowledge and the RAG tool to gather relevant context about the machine.
+            - Determine which recon or exploit commands would help investigate the machine based on its name, known ports, or CVEs.
+            - Use the 'run_command' tool to execute those commands automatically over SSH.
+            - You may run multiple useful commands in sequence without asking for confirmation.
+            - Always analyze each command’s output before deciding what to do next.
+            - Keep safety in mind and avoid dangerous commands like `rm`, `shutdown`, `:(){ :|: & };:` or infinite loops.
 
         Begin your analysis now.
         """)
