@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Server, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import logo from '../../src/components/AICyberLabs_Logo_Blue.png';
 
 interface SimplifiedSidebarProps {
   onServiceToggle?: (service: string) => void;
@@ -21,27 +22,33 @@ export const Sidebar: React.FC<SimplifiedSidebarProps> = ({
         isCollapsed ? 'w-14' : 'w-64'
       } transition-all duration-300 text-white p-4 flex flex-col h-screen border-r border-cyan relative`}
     >
-      {/* Vertical rotated label when collapsed */}
       {isCollapsed && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rotate-90 origin-center text-cyan text-2xl font-MonomaniacOne whitespace-nowrap select-none">
           AI Cyber Labs
         </div>
       )}
 
-      {/* Top: title & toggle */}
-      <div className="flex items-center justify-between mb-8">
-        {!isCollapsed && (
-          <h1 className="text-3xl text-cyan font-MonomaniacOne select-none">AI Cyber Labs</h1>
-        )}
-        <button onClick={toggleSidebar} className="text-cyan hover:text-bgCyan">
-          {isCollapsed ? <ChevronsRight size={20} /> : <ChevronsLeft size={20} />}
-        </button>
-      </div>
+      {!isCollapsed && (
+        <div className="mb-8">
+          <img
+            src={logo}
+            alt="AI Cyber Labs Logo"
+            className="h-16 w-auto"
+          />
+        </div>
+      )}
+
+      <button
+        onClick={toggleSidebar}
+        className={`text-cyan hover:text-bgCyan absolute ${
+          isCollapsed ? 'top-4 right-4' : 'top-1/2 -translate-y-1/2 right-4'
+        }`}
+      >
+        {isCollapsed ? <ChevronsRight size={20} /> : <ChevronsLeft size={20} />}
+      </button>
 
       {!isCollapsed && (
         <>
-        
-
           <div className="mb-8 border border-cyan rounded-lg p-3">
             <h2 className="text-xl font-semibold mb-4">Container Services</h2>
             <div className="flex flex-col gap-3">
