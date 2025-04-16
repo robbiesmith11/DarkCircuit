@@ -16,7 +16,11 @@ function App() {
   const [isSshConnecting, setIsSshConnecting] = useState(false);
   const [sshConnectionError, setSshConnectionError] = useState<string | null>(null);
 
-  const executeCommandRef = useRef<((command: string) => void) | null>(null);
+  // A ref to store the execute command function
+  const executeCommandRef = useRef<((command: string, commandId?: number) => void) | null>(null);
+
+  // Store pending agent commands
+  const pendingCommandsRef = useRef<Map<number, { command: string, resolve: (output: string) => void }>>(new Map());
 
   const webSocketUrl = `${TERMINAL_WS_URL}/ws/ssh-terminal`;
 
@@ -99,16 +103,77 @@ function App() {
   };
 
   // Function to handle SSH commands from the ChatContainer
-  const handleSshToolCall = (command: string) => {
+  const handleSshToolCall = async (command: string, commandId?: number): Promise<string> => {
     if (isSshConnected && executeCommandRef.current) {
-      executeCommandRef.current(command);
+      if (commandId !== undefined) {
+        return new Promise<string>((resolve) => {
+          // Store this promise's resolve function to call when output is ready
+          pendingCommandsRef.current.set(commandId, { command, resolve });
+
+          // Execute the command in the terminal, passing the command ID
+          executeCommandRef.current!(command, commandId);
+
+          // Set a timeout to resolve the promise after some time if not resolved
+          // Increase timeout from 15s to 60s for longer-running commands
+          setTimeout(() => {
+            // Check if this command is still pending
+            if (pendingCommandsRef.current.has(commandId)) {
+              const pendingCommand = pendingCommandsRef.current.get(commandId);
+              if (pendingCommand) {
+                pendingCommand.resolve(`Command timed out after 60 seconds. Check terminal for results.`);
+                pendingCommandsRef.current.delete(commandId);
+              }
+            }
+          }, 60000); // Increased to 60 seconds
+        });
+      } else {
+        // For commands without an ID, just execute without waiting for output
+        executeCommandRef.current!(command);
+        return "Command executed";
+      }
     } else {
       // If not connected, show a toast warning
       toast.warning('Terminal not connected. Please connect SSH to execute commands.');
+      return "Terminal not connected";
     }
   };
 
-  const registerExecuteCommand = (fn: (command: string) => void) => {
+  // Handle terminal output
+  const handleTerminalOutput = (commandId: number, output: string, isPartial: boolean = false) => {
+    console.log(`Received terminal output for command ${commandId} (${isPartial ? 'partial' : 'complete'}): ${output.substring(0, 100)}...`);
+
+    // Send all outputs to the backend (both partial and complete)
+    sendOutputToBackend(commandId, output, isPartial);
+
+    // Only resolve the promise for complete responses
+    // or if the partial output contains a completion indicator
+    const pendingCommand = pendingCommandsRef.current.get(commandId);
+    if (pendingCommand && (!isPartial || output.includes("[Command completed]"))) {
+      pendingCommand.resolve(output);
+      pendingCommandsRef.current.delete(commandId);
+    }
+  };
+
+  // Send output to backend API
+  const sendOutputToBackend = async (commandId: number, output: string, isPartial: boolean = false) => {
+    try {
+      await fetch(`${API_BASE_URL}/api/terminal/output`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          command_id: commandId,
+          output: output,
+          is_partial: isPartial
+        }),
+      });
+    } catch (error) {
+      console.error('Error sending terminal output to backend:', error);
+    }
+  };
+
+  const registerExecuteCommand = (fn: (command: string, commandId?: number) => void) => {
     executeCommandRef.current = fn;
   };
 
@@ -129,7 +194,8 @@ function App() {
       }
 
       toast.info(`Toggling ${service} service...`);
-      executeCommandRef.current(command);
+      // Safe to use ! here since we already checked it's not null above
+      executeCommandRef.current!(command);
     } else {
       toast.warning('Please connect to SSH first before managing services.');
     }
@@ -165,6 +231,7 @@ function App() {
                   isConnected={isSshConnected}
                   onDisconnect={handleSshDisconnect}
                   registerExecuteCommand={registerExecuteCommand}
+                  onTerminalOutput={handleTerminalOutput}
                 />
               )}
             </div>

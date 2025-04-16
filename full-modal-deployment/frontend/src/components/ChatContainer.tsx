@@ -8,7 +8,7 @@ const BACKEND_API = import.meta.env.VITE_BACKEND_API_URL || '';
 
 // Add a new onSshToolCall prop to receive execute command function
 interface ChatContainerProps {
-  onSshToolCall?: (command: string) => void;
+  onSshToolCall?: (command: string, commandId?: number) => Promise<string>;
 }
 
 export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) => {
@@ -21,6 +21,11 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
   const currentAssistantIndexRef = useRef<number>(-1);
   // Add a flag to track if a response is currently streaming
   const [isStreaming, setIsStreaming] = useState(false);
+  // Add a map to store pending terminal commands
+  const pendingTerminalCommandsRef = useRef<Map<number, {
+    command: string;
+    pendingPromise: Promise<string>;
+  }>>(new Map());
 
   const fetchModels = async () => {
     try {
@@ -103,8 +108,55 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
             // Log actual structure of the event to help with debugging
             console.log("Event structure:", Object.keys(parsed));
 
+            // Handle UI terminal commands
+            if (parsed.type === 'ui_terminal_command' && onSshToolCall) {
+              const commandId = parsed.command_id;
+              const command = parsed.command;
+
+              console.log(`🖥️ UI Terminal Command: ${command} (ID: ${commandId})`);
+
+              // Add to debug panel
+              setDebugEvents(prev => [...prev, {
+                type: 'tool_call',
+                timestamp: new Date(),
+                content: `Tool: Terminal Command\nCommand ID: ${commandId}\nCommand: ${command}`
+              }]);
+
+              // Execute the command in the terminal and get output
+              const pendingPromise = onSshToolCall(command, commandId);
+
+              // Store the promise for later use
+              pendingTerminalCommandsRef.current.set(commandId, {
+                command,
+                pendingPromise
+              });
+
+              // When the promise resolves, log the output
+              pendingPromise.then(output => {
+                console.log(`🖥️ Terminal Output for Command ${commandId}: ${output.substring(0, 100)}...`);
+
+                // Add to debug panel
+                setDebugEvents(prev => [...prev, {
+                  type: 'tool_result',
+                  timestamp: new Date(),
+                  content: `Command ${commandId} Result:\n${output}`
+                }]);
+
+                // Clean up
+                pendingTerminalCommandsRef.current.delete(commandId);
+              }).catch(error => {
+                console.error(`Error executing terminal command ${commandId}:`, error);
+                setDebugEvents(prev => [...prev, {
+                  type: 'tool_result',
+                  timestamp: new Date(),
+                  content: `Command ${commandId} Error: ${error.message || String(error)}`
+                }]);
+                pendingTerminalCommandsRef.current.delete(commandId);
+              });
+            }
+
             // Handle standardized tool calls - add to debug panel and check for SSH commands
-            if (parsed.type === 'tool_call') {
+            else if (parsed.type === 'tool_call') {
               console.log("💥 TOOL CALL DETECTED:", parsed);
 
               // Extract tool name and input with proper fallbacks
@@ -121,14 +173,14 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
                 content: `Tool: ${toolName}\nDescription: ${toolDesc}\nInput: ${toolInput}`
               }]);
 
-              // Check if this is an SSH command tool call
-              if (toolName === 'run_command') {
-                if (onSshToolCall && typeof toolInput === 'string') {
-                  // Execute the command in the terminal
+              // Check if this is an SSH command tool call - DEPRECATED METHOD
+              // Now we use ui_terminal_command events instead
+              if (toolName === 'run_command' && onSshToolCall) {
+                if (typeof toolInput === 'string') {
+                  // Execute the command in the terminal - old method without waiting for output
                   onSshToolCall(toolInput);
-
                 } else {
-                  console.warn('SSH tool call received but onSshToolCall not provided or input is not a string');
+                  console.warn('SSH tool call received but input is not a string');
                 }
               }
             }

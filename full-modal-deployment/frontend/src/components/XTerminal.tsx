@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Terminal as TerminalIcon, Maximize2, Minimize2, X, RotateCcw } from 'lucide-react';
+import { Terminal as TerminalIcon, Maximize2, Minimize2, X, RotateCcw, AlertCircle } from 'lucide-react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
@@ -9,14 +9,17 @@ interface XTerminalProps {
   webSocketUrl: string;
   isConnected: boolean;
   onDisconnect: () => void;
-  registerExecuteCommand?: (fn: (command: string) => void) => void;
+  registerExecuteCommand?: (fn: (command: string, commandId?: number) => void) => void;
+  // Add new props for agent command execution
+  onTerminalOutput?: (commandId: number, output: string, isPartial?: boolean) => void;
 }
 
 export const XTerminal: React.FC<XTerminalProps> = ({
   webSocketUrl,
   isConnected,
   onDisconnect,
-  registerExecuteCommand
+  registerExecuteCommand,
+  onTerminalOutput
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -32,6 +35,16 @@ export const XTerminal: React.FC<XTerminalProps> = ({
   // Track auto-reconnect attempts
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 3;
+  // Add buffer for output collection
+  const outputBufferRef = useRef<string>("");
+  // Track active commands with simplified structure
+  const activeCommandsRef = useRef<Map<number, {
+    command: string,
+    timestamp: number,
+    outputBuffer: string,
+    updateTimeout: NodeJS.Timeout | null,
+    lastOutputLength: number
+  }>>(new Map());
 
   // Initialize the terminal
   useEffect(() => {
@@ -108,13 +121,21 @@ export const XTerminal: React.FC<XTerminalProps> = ({
 
       // Register command execution function if needed
       if (registerExecuteCommand) {
-        registerExecuteCommand((command: string) => {
+        registerExecuteCommand((command: string, commandId?: number) => {
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            // Clear output buffer before executing a new command
+            outputBufferRef.current = "";
+
             // Send the command with a newline to execute it
             wsRef.current.send(command + '\n');
 
-            // Also echo the command to the terminal for user feedback
-            terminal.writeln(`$ ${command}`);
+            // If this is an agent command with ID, track it
+            if (commandId !== undefined) {
+              console.log(`Starting command tracking for ID ${commandId}: ${command}`);
+
+              // Set up output collection for this command
+              startOutputCollection(commandId, command);
+            }
           } else if (status !== 'connecting') {
             // If not connected and not already attempting to connect, show feedback
             terminal.writeln('\r\n\x1b[1;31mNot connected. Attempting to reconnect...\x1b[0m');
@@ -134,8 +155,161 @@ export const XTerminal: React.FC<XTerminalProps> = ({
       if (registerExecuteCommand) {
         registerExecuteCommand(() => {});
       }
+
+      // Clear any active timeouts - simplified with single timeout reference
+      activeCommandsRef.current.forEach(cmd => {
+        if (cmd.updateTimeout) {
+          clearTimeout(cmd.updateTimeout);
+        }
+      });
     };
   }, [registerExecuteCommand]);
+
+  // Unified function to start output collection for a command
+  const startOutputCollection = (commandId: number, command: string) => {
+    // Initialize output buffer for this command
+    let commandOutputBuffer = "";
+
+    // Detect long-running commands
+    const isLongRunning = /nmap|enum4linux|gobuster|dirbuster|nikto|hydra|masscan|wpscan/.test(command);
+
+    // Configure timing parameters - use more frequent updates for all commands
+    const pollingInterval = isLongRunning ? 1500 : 2500; // Poll more frequently for long-running commands
+    const maxLifetime = 120000; // 2 minutes maximum runtime
+
+    // Track state
+    let lastOutputLength = 0;
+    const startTime = Date.now();
+
+    // Improved shell prompt pattern with more variants
+    const shellPromptPattern = /(\$ |# |> |sh-[0-9]+\.[0-9]+\$ |bash-[0-9]+\.[0-9]+\$ |\n[^\n]+[$#>]\s*$)/;
+
+    // Unified function to process output
+    const processOutput = () => {
+      const cmd = activeCommandsRef.current.get(commandId);
+      if (!cmd) return;
+
+      // Check for timeout first
+      const elapsed = Date.now() - startTime;
+      if (elapsed > maxLifetime) {
+        onTerminalOutput?.(commandId, commandOutputBuffer + "\n\n[Command timed out after 2 minutes]", false);
+        // Type-safe clearTimeout - only call if not null
+        if (cmd.updateTimeout) {
+          clearTimeout(cmd.updateTimeout);
+        }
+        activeCommandsRef.current.delete(commandId);
+        return;
+      }
+
+      // Process any new output
+      const latestOutput = outputBufferRef.current;
+      if (latestOutput.length > 0) {
+        commandOutputBuffer += latestOutput;
+        outputBufferRef.current = ""; // Clear after consuming
+      }
+
+      // Check for completion
+      const isComplete = shellPromptPattern.test(commandOutputBuffer);
+
+      // Send updates if we have new content or if command completed
+      if (commandOutputBuffer.length > lastOutputLength || isComplete) {
+        const output = isComplete
+          ? commandOutputBuffer + "\n\n[Command completed]"
+          : commandOutputBuffer + "\n\n[Command still running... This is a partial output.]";
+
+        onTerminalOutput?.(commandId, output, !isComplete);
+        lastOutputLength = commandOutputBuffer.length;
+
+        activeCommandsRef.current.set(commandId, {
+          ...cmd,
+          outputBuffer: commandOutputBuffer,
+          lastOutputLength: lastOutputLength
+        });
+      }
+
+      // Clean up if complete
+      if (isComplete) {
+        console.log(`Command ${commandId} completed after ${Math.round(elapsed/1000)}s`);
+        // Type-safe clearTimeout
+        if (cmd.updateTimeout) {
+          clearTimeout(cmd.updateTimeout);
+        }
+        activeCommandsRef.current.delete(commandId);
+        return;
+      }
+
+      // Schedule next check
+      const nextTimeout = setTimeout(processOutput, pollingInterval);
+      activeCommandsRef.current.set(commandId, {
+        ...cmd,
+        updateTimeout: nextTimeout
+      });
+    };
+
+    // Start the processing loop
+    const initialTimeout = setTimeout(processOutput, 500); // Start quickly
+
+    // Register command in tracking map
+    activeCommandsRef.current.set(commandId, {
+      command,
+      timestamp: startTime,
+      outputBuffer: "",
+      updateTimeout: initialTimeout,
+      lastOutputLength: 0
+    });
+
+    console.log(`Started unified output collection for command ${commandId}: ${command}`);
+  };
+
+  // Improved handleTerminalOutput function
+  const handleTerminalOutput = (data: string | ArrayBuffer | Blob | unknown) => {
+    try {
+      let outputStr = "";
+      if (typeof data === 'string') {
+        outputStr = data;
+      } else if (data instanceof ArrayBuffer) {
+        outputStr = new TextDecoder('utf-8').decode(data);
+      } else if (typeof Blob !== 'undefined' && Object.prototype.toString.call(data) === '[object Blob]') {
+        const blobData = data as Blob;
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (reader.result) {
+            const resultStr = typeof reader.result === 'string'
+              ? reader.result
+              : new TextDecoder('utf-8').decode(reader.result as ArrayBuffer);
+            handleTerminalOutput(resultStr); // recursive call
+          }
+        };
+        reader.readAsText(blobData);
+        return;
+      } else {
+        outputStr = String(data || '');
+      }
+
+      // Skip special messages
+      if (outputStr.startsWith('__OUTPUT__')) {
+        return;
+      }
+
+      // Accumulate output
+      outputBufferRef.current += outputStr;
+
+      // Check if any commands are actively using this output
+      if (activeCommandsRef.current.size > 0) {
+        // Log the buffer size occasionally to help with debugging
+        if (outputBufferRef.current.length > 1000 && outputBufferRef.current.length % 5000 === 0) {
+          console.log(`Output buffer size: ${outputBufferRef.current.length} bytes`);
+        }
+      }
+
+      // Trim buffer to prevent memory issues
+      if (outputBufferRef.current.length > 250000) {
+        outputBufferRef.current = outputBufferRef.current.slice(-200000);
+      }
+    } catch (error) {
+      console.error('Error processing terminal output:', error);
+    }
+  };
 
   // Resize handling
   useEffect(() => {
@@ -193,10 +367,17 @@ export const XTerminal: React.FC<XTerminalProps> = ({
     };
 
     ws.onmessage = (event) => {
+      // Process all terminal output for command tracking
+      handleTerminalOutput(event.data);
+
+      // Handle regular terminal display
       if (xtermRef.current) {
         // Handle both text and binary messages
         if (typeof event.data === 'string') {
-          xtermRef.current.write(event.data);
+          // Skip processing special messages that start with __OUTPUT__
+          if (!event.data.startsWith('__OUTPUT__')) {
+            xtermRef.current.write(event.data);
+          }
         } else {
           // Handle binary data (for proper terminal escape sequences)
           const reader = new FileReader();
@@ -291,6 +472,9 @@ export const XTerminal: React.FC<XTerminalProps> = ({
     setReconnectTrigger(prev => prev + 1);
   };
 
+  // Track whether any commands are in progress
+  const hasActiveCommands = activeCommandsRef.current.size > 0;
+
   return (
     <div className={`relative bg-black rounded-lg overflow-hidden border border-gray-700 flex flex-col ${
       isMaximized 
@@ -306,6 +490,12 @@ export const XTerminal: React.FC<XTerminalProps> = ({
             {status === 'connected' && <span className="text-green-500 ml-2">(connected)</span>}
             {status === 'connecting' && <span className="text-yellow-500 ml-2">(connecting...)</span>}
             {status === 'disconnected' && <span className="text-red-500 ml-2">(disconnected)</span>}
+            {hasActiveCommands && (
+              <span className="text-yellow-500 ml-2 flex items-center">
+                <AlertCircle size={14} className="mr-1 animate-pulse" />
+                (Command running)
+              </span>
+            )}
           </span>
         </div>
         <div className="flex space-x-2">
