@@ -173,16 +173,6 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
                 content: `Tool: ${toolName}\nDescription: ${toolDesc}\nInput: ${toolInput}`
               }]);
 
-              // Check if this is an SSH command tool call - DEPRECATED METHOD
-              // Now we use ui_terminal_command events instead
-              if (toolName === 'run_command' && onSshToolCall) {
-                if (typeof toolInput === 'string') {
-                  // Execute the command in the terminal - old method without waiting for output
-                  onSshToolCall(toolInput);
-                } else {
-                  console.warn('SSH tool call received but input is not a string');
-                }
-              }
             }
 
             // Handle standardized tool results - only add to debug panel
