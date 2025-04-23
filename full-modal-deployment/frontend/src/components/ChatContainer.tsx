@@ -9,9 +9,15 @@ const BACKEND_API = import.meta.env.VITE_BACKEND_API_URL || '';
 // Add a new onSshToolCall prop to receive execute command function
 interface ChatContainerProps {
   onSshToolCall?: (command: string, commandId?: number) => Promise<string>;
+  selectedChallenge?: string;  // Add selected challenge prop
+  targetIp?: string;          // Add target IP prop
 }
 
-export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) => {
+export const ChatContainer: React.FC<ChatContainerProps> = ({
+  onSshToolCall,
+  selectedChallenge = '',
+  targetIp = ''
+}) => {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
@@ -21,6 +27,8 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
   const currentAssistantIndexRef = useRef<number>(-1);
   // Add a flag to track if a response is currently streaming
   const [isStreaming, setIsStreaming] = useState(false);
+  // Add a flag to track if it's the first message in the conversation
+  const [isFirstMessage, setIsFirstMessage] = useState(true);
   // Add a map to store pending terminal commands
   const pendingTerminalCommandsRef = useRef<Map<number, {
     command: string;
@@ -28,43 +36,12 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
   }>>(new Map());
 
   // Add state for system prompts with default values
-  const [reasonerPrompt, setReasonerPrompt] = useState<string>(
-    `You are a multi-step problem solver. Always follow this pattern:
+const [reasonerPrompt, setReasonerPrompt] = useState<string>("");
+const [responderPrompt, setResponderPrompt] = useState<string>("");
 
-1. Analyze the user request.
-2. Decide if a tool is needed (search or command).
-3. Use the tool and analyze the result.
-4. ONLY when you have everything you need and are fully prepared to give the final answer, conclude with the exact phrase: [Ready to answer]'
-
-IMPORTANT: 
-- Do NOT use the phrase [Ready to answer] anywhere in your thinking process except as the final signal.
-- Do NOT output the final answer here - only think through the steps.
-- Do NOT repeat the instructions or the [Ready to answer] phrase when outlining your approach.
-- If you need to use a tool, clearly indicate which tool you want to use and what input you're providing.
-- Avoid repeating tool actions indefinitely. If a tool result is unclear or incomplete after 3 tries, stop and respond.
-- If a command might run forever (like 'ping'), make sure it has a limit (e.g., 'ping -c 4').
-- For network scanning commands like nmap that can take a long time, consider adding the --min-rate parameter to speed up scanning.
-
-Hack The Box Challenges:
-- If the user asks to analyze, enumerate, or exploit a Hack The Box machine (e.g., "Start on Dancing at <target_ip>"):
-    - Use your own knowledge and the RAG tool to gather relevant context about the machine.
-    - Determine which recon or exploit commands would help investigate the machine based on its name, known ports, or CVEs.
-    - Use the 'run_command' tool to execute those commands automatically over SSH.
-    - You may run multiple useful commands in sequence without asking for confirmation.
-    - Always analyze each command's output before deciding what to do next.
-    - Keep safety in mind and avoid dangerous commands like \`rm\`, \`shutdown\`, \`:(){ :|: & };:\` or infinite loops.
-
-Begin your analysis now.
-`
-  );
-
-  const [responderPrompt, setResponderPrompt] = useState<string>(
-    `Now answer the user's question clearly and concisely based on previous analysis and tool results.`
-  );
-
-  const fetchModels = async () => {
-      // Predefined models with display names and props
-      const predefinedModels: Model[] = [
+// Modified to accept prompts as parameters
+const createModels = (reasonerPrompt: string, responderPrompt: string) => {
+  const predefinedModels: Model[] = [
         {
           model: "gpt-4.1",
           displayName: "GPT-4.1",
@@ -115,19 +92,83 @@ Begin your analysis now.
   };
 
   useEffect(() => {
-    fetchModels();
+    const initialize = async () => {
+      try {
+        // Correct path - starts from the root of your web server
+        const response = await fetch('/prompts.json');
+
+        if (response.ok) {
+          const prompts = await response.json();
+
+          // Store in state
+          setReasonerPrompt(prompts.reasonerPrompt);
+          setResponderPrompt(prompts.responderPrompt);
+
+          // Create models with the loaded prompts
+          createModels(prompts.reasonerPrompt, prompts.responderPrompt);
+        } else {
+          console.warn("Couldn't find any default prompts!");
+          // Use fallback prompts
+          const fallbackReasoner = "Default reasoner prompt if JSON fails to load";
+          const fallbackResponder = "Default responder prompt if JSON fails to load";
+
+          setReasonerPrompt(fallbackReasoner);
+          setResponderPrompt(fallbackResponder);
+          createModels(fallbackReasoner, fallbackResponder);
+        }
+      } catch (error) {
+        console.error("Error loading prompts:", error);
+        // Handle error with fallbacks
+        const fallbackReasoner = "Default reasoner prompt if JSON fails to load";
+        const fallbackResponder = "Default responder prompt if JSON fails to load";
+
+        setReasonerPrompt(fallbackReasoner);
+        setResponderPrompt(fallbackResponder);
+        createModels(fallbackReasoner, fallbackResponder);
+      }
+    };
+
+    initialize();
+
     return () => abortControllerRef.current?.abort();
   }, []);
 
-  const handleSendMessage = async (message: string) => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+const handleSendMessage = async (message: string) => {
+  if (abortControllerRef.current) {
+    abortControllerRef.current.abort();
+  }
+
+  // Reset debug events for new conversation
+  setDebugEvents([]);
+
+  // Modify message for first message in conversation
+  let finalMessage = message;
+  if (isFirstMessage && (selectedChallenge || targetIp)) {
+    let suffix = '\n\n'; // Start with line breaks after the original message
+
+    if (selectedChallenge) {
+      suffix += `HackTheBox challenge: ${selectedChallenge}\n`;
     }
 
-    // Reset debug events for new conversation
-    setDebugEvents([]);
+    if (targetIp) {
+      suffix += `Target IP: ${targetIp}\n`;
+    }
 
-    const userMessage: ChatMessage = { role: 'user', content: message };
+    if (suffix !== '\n\n') {
+      finalMessage = finalMessage + suffix;
+      // Log the modified message to debug
+      setDebugEvents(prev => [...prev, {
+        type: 'thinking',
+        timestamp: new Date(),
+        content: `Modified first message with target info: ${finalMessage}`
+      }]);
+    }
+
+    // No longer the first message after sending
+    setIsFirstMessage(false);
+  }
+
+    const userMessage: ChatMessage = { role: 'user', content: finalMessage };
     // Add user message and create an empty assistant message
     setChatHistory((prev) => [...prev, userMessage, { role: 'assistant', content: '', isMarkdown: false }]);
 
@@ -152,7 +193,7 @@ Begin your analysis now.
 
       const requestBody: ChatRequestBody = {
         model: selectedModel,
-        messages: [{ role: 'user', content: message }]
+        messages: [{ role: 'user', content: finalMessage }]
       };
 
       // Add system prompts if they exist
@@ -352,6 +393,13 @@ Begin your analysis now.
       });
 
     } catch (error) {
+      // Check if this is an AbortError, which means we manually cancelled it
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        console.log('Request was aborted');
+        // We're cleaning up in handleClearChat, so no need to update chat history here
+        return;
+      }
+
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error('Streaming error:', errorMsg);
       setChatHistory((prev) => {
@@ -372,35 +420,32 @@ Begin your analysis now.
     }
   };
 
-  const handleModelDelete = async (model: string) => {
-    if (!model) return;
-    try {
-      const res = await fetch(`${BACKEND_API}/api/models/${model}`, { method: 'DELETE' });
-      const result = await res.json();
-      if (!res.ok || !result.success) throw new Error(result.error || 'Delete failed');
-      toast.success(`Model ${model} deleted`);
-      await fetchModels();
-    } catch (err) {
-      toast.error(`Failed to delete model: ${err instanceof Error ? err.message : String(err)}`);
+  // Handle clearing the chat and resetting the first message flag
+  const handleClearChat = () => {
+    // Abort any ongoing requests first
+    if (abortControllerRef.current) {
+      console.log('Aborting ongoing request...');
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
-  };
 
-  const handleModelPull = async (model: string) => {
-    if (!model) throw new Error('No model specified');
-    try {
-      const res = await fetch(`${BACKEND_API}/api/models/pull`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model })
-      });
-      const result = await res.json();
-      if (!res.ok || !result.success) throw new Error(result.error || 'Pull failed');
-      toast.success(`Model ${model} pulled successfully`);
-      await fetchModels();
-    } catch (err) {
-      toast.error(`Failed to pull model: ${err instanceof Error ? err.message : String(err)}`);
-      throw err;
+    // Clear all pending terminal commands
+    const pendingCommands = pendingTerminalCommandsRef.current;
+    if (pendingCommands.size > 0) {
+      console.log(`Clearing ${pendingCommands.size} pending terminal commands`);
+      pendingCommands.clear();
     }
+
+    // Reset streaming flag
+    setIsStreaming(false);
+
+    // Clear the chat history and debug events
+    setChatHistory([]);
+    setDebugEvents([]);
+    currentAssistantIndexRef.current = -1; // Reset assistant index on chat clear
+    setIsFirstMessage(true); // Reset first message flag so the next message will include challenge/IP info
+
+    toast.info("Chat cleared and all operations stopped");
   };
 
   // Handle prompt updates
@@ -418,14 +463,8 @@ Begin your analysis now.
           models={models}
           chatHistory={chatHistory}
           onSendMessage={handleSendMessage}
-          onClearChat={() => {
-            setChatHistory([]);
-            setDebugEvents([]);
-            currentAssistantIndexRef.current = -1; // Reset assistant index on chat clear
-          }}
+          onClearChat={handleClearChat}  // Use our new clear handler
           onModelSelect={setSelectedModel}
-          onModelDelete={handleModelDelete}
-          onModelPull={handleModelPull}
           selectedModel={selectedModel}
           onToggleDebug={() => setShowDebugPanel(!showDebugPanel)}
           showDebugPanel={showDebugPanel}

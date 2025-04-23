@@ -1,20 +1,51 @@
-import React, { useState } from 'react';
-import { Server, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Info, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import teamLogo from '../../src/components/AICyberLabs_Logo_Blue.png';
 
+// Define the HTB challenge list
+const HTB_CHALLENGES = [
+  "Dancing",
+  "Fawn",
+  "Lame"
+];
+
 interface SimplifiedSidebarProps {
-  onServiceToggle?: (service: string) => void;
+  selectedChallenge?: string;
+  targetIp?: string;
+  onChallengeSelect?: (challenge: string) => void;
+  onTargetIpChange?: (ip: string) => void;
 }
 
 export const Sidebar: React.FC<SimplifiedSidebarProps> = ({
-  onServiceToggle = () => {},
+  selectedChallenge = '',
+  targetIp = '',
+  onChallengeSelect = () => {},
+  onTargetIpChange = () => {}
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(true);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [localTargetIp, setLocalTargetIp] = useState(targetIp);
+
+  // Update local IP when prop changes
+  useEffect(() => {
+    setLocalTargetIp(targetIp);
+  }, [targetIp]);
 
   const openModal = () => setIsModalOpen(true);
   const closeModal = () => setIsModalOpen(false);
   const toggleSidebar = () => setIsCollapsed(!isCollapsed);
+
+  const handleChallengeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    onChallengeSelect(e.target.value);
+  };
+
+  const handleIpChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLocalTargetIp(e.target.value);
+  };
+
+  const handleIpBlur = () => {
+    onTargetIpChange(localTargetIp);
+  };
 
   return (
     <div
@@ -24,7 +55,7 @@ export const Sidebar: React.FC<SimplifiedSidebarProps> = ({
     >
       {isCollapsed && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rotate-90 origin-center text-cyan text-2xl font-MonomaniacOne whitespace-nowrap select-none">
-          Target Settings
+          Target Configuration
         </div>
       )}
 
@@ -50,22 +81,51 @@ export const Sidebar: React.FC<SimplifiedSidebarProps> = ({
       {!isCollapsed && (
           <>
             <div className="mb-8 border border-cyan rounded-lg p-3">
-              <h2 className="text-xl font-semibold mb-4">Container Services</h2>
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-xl font-bold text-white">Target Configuration</h2>
+                <div className="relative group">
+                  <Info size={16} className="text-cyan cursor-help"/>
+                  <div
+                      className="absolute left-0 bottom-full mb-2 w-64 bg-gray-800 text-white p-2 rounded-md text-sm opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-10">
+                    This information will be automatically appended to your first message in a conversation to provide
+                    context to the assistant.
+                  </div>
+                </div>
+              </div>
               <div className="flex flex-col gap-3">
-                <button
-                    onClick={() => onServiceToggle('apache')}
-                    className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg flex items-center justify-center"
-                >
-                  <Server className="mr-2" size={18}/>
-                  Apache
-                </button>
-                <button
-                    onClick={() => onServiceToggle('squid')}
-                    className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg flex items-center justify-center"
-                >
-                  <Server className="mr-2" size={18}/>
-                  Squid
-                </button>
+                {/* HTB Challenge Dropdown */}
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="htb-challenge" className="text-sm text-gray-300">
+                    HackTheBox Challenge
+                  </label>
+                  <select
+                      id="htb-challenge"
+                      value={selectedChallenge}
+                      onChange={handleChallengeChange}
+                      className="bg-gray-700 text-white px-4 py-2 rounded-lg w-full"
+                  >
+                    <option value="">Select a challenge</option>
+                    {HTB_CHALLENGES.map(challenge => (
+                        <option key={challenge} value={challenge}>{challenge}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Target IP Input */}
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="target-ip" className="text-sm text-gray-300">
+                    Target IP
+                  </label>
+                  <input
+                      id="target-ip"
+                      type="text"
+                      value={localTargetIp}
+                      onChange={handleIpChange}
+                      onBlur={handleIpBlur}
+                      placeholder="e.g. 10.129.203.101"
+                      className="bg-gray-700 text-white px-4 py-2 rounded-lg w-full"
+                  />
+                </div>
               </div>
             </div>
 
@@ -83,13 +143,13 @@ export const Sidebar: React.FC<SimplifiedSidebarProps> = ({
       {isModalOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
             <div className="bg-gray-800 text-white p-6 rounded-lg w-96">
-                  <h2 className="text-xl font-bold mb-4">About Pwnbox</h2>
-                  <p className="mb-4">
-                      Pwnbox is Hack The Box’s cloud-based Parrot OS VM with 600+ pre-installed tools for penetration
-                      testing:
+              <h2 className="text-xl font-bold mb-4">About Pwnbox</h2>
+              <p className="mb-4">
+                    Pwnbox is Hack The Box's cloud-based Parrot OS VM with 600+ pre-installed tools for penetration
+                    testing:
                   </p>
                   <ul className="list-disc ml-4 mb-4">
-                      <li>Enumeration: Nmap, Gobuster, theHarvester, Masscan</li>
+                    <li>Enumeration: Nmap, Gobuster, theHarvester, Masscan</li>
                       <li>Exploitation: Metasploit, SQLMap, Burp Suite Community</li>
                       <li>Post-Exploitation: LinPEAS, BloodHound, Impacket</li>
                       <li>Reverse Engineering: Radare2, GDB, Cutter</li>

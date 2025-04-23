@@ -20,8 +20,6 @@ interface ChatInterfaceProps {
   onSendMessage: (message: string) => void;
   onClearChat: () => void;
   onModelSelect: (model: string) => void;
-  onModelDelete: (model: string) => void;
-  onModelPull: (model: string) => void;
   selectedModel: string;
   onToggleDebug: () => void;
   showDebugPanel: boolean;
@@ -57,6 +55,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory]);
 
+  // Reset scroll position when chat history changes to empty
+  useEffect(() => {
+    if (chatHistory.length === 0) {
+      setIsScrolledUp(false);
+
+      // Ensure the container is scrolled to top when chat is cleared
+      if (chatContainerRef.current) {
+        chatContainerRef.current.scrollTop = 0;
+      }
+    }
+  }, [chatHistory.length]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (message.trim()) {
@@ -72,6 +82,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     // Close the modal
     setIsModalOpen(false);
+  };
+
+  // Handle local clear chat with scroll reset
+  const handleClearChat = () => {
+    // Call parent's clear handler
+    onClearChat();
+
+    // Reset local scroll state
+    setIsScrolledUp(false);
+
+    // Force scroll to top
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = 0;
+    }
   };
 
   // Scroll to bottom when the user scrolls up
@@ -287,7 +311,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
         <div ref={chatEndRef} />
 
-        {isScrolledUp && (
+        {/* Only show "scroll to bottom" button if there are messages AND we're scrolled up */}
+        {isScrolledUp && chatHistory.length > 0 && (
           <button
             onClick={scrollToBottom}
             className="sticky bottom-[6rem] left-1/2 transform -translate-x-1/2 bg-cyan text-black w-8 h-16 rounded-full shadow-lg hover:bg-bgCyan flex items-center justify-center"
@@ -320,7 +345,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </div>
             <button
               type="button"
-              onClick={onClearChat}
+              onClick={handleClearChat}
               className="bg-red-600 hover:bg-white hover:text-red-600 text-white w-10 h-10 rounded-full flex items-center justify-center"
               aria-label="Clear chat"
               title="Clear chat"

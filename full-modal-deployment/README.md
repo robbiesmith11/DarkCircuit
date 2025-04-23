@@ -39,19 +39,7 @@ Install npm dependencies for frontend:
 cd frontend && npm install && cd ..
 ```
 
-### Step 4: Deploy Ollama Server (Optional)
-> [!CAUTION]
-> App currently isn't using the Ollama server so this step isn't necessary at the moment. However, if this step is skipped you will see errors relating to the Ollama server which you can ignore. Eventually we may get the agent using the Ollama server in which case this would be a required step.
-
-Run the following command from your terminal to deploy your Ollama server to Modal:
-```bash
-modal deploy ollama_server.py
-```
-
-> [!NOTE]
-> You can set your GPU configuration in `ollama_server.py` by changing `GPU = "T4"`(cheapest GPU) to something faster such as `GPU = "A10G"`(will be a little bit more expensive).
-
-### Step 5: Create Environment File
+### Step 4: Create Environment File
 1. In the top left corner of your Modal dashboard, find your workspace name.
 
 ![In this example the workspace name is `brandontoews`.](modal_workspace.png)
@@ -64,7 +52,7 @@ echo 'VITE_BACKEND_API_URL=https://<replace-with-workspace-name>--darkcircuit-ap
 echo 'VITE_TERMINAL_WS_URL=wss://<replace-with-workspace-name>--darkcircuit-app-serve.modal.run' >> frontend/.env
 ```
 
-### Step 6: Create OpenAI API Secret on Modal
+### Step 5: Create OpenAI API Secret on Modal
 > [!CAUTION]
 > App can run without performing this step but the user won't be able to use the LLM side.
 1. In the top left corner of your Modal dashboard select `Secrets`.
@@ -74,19 +62,19 @@ echo 'VITE_TERMINAL_WS_URL=wss://<replace-with-workspace-name>--darkcircuit-app-
 4. Paste OpenAI API key in the `Value` field and click `Done` button.
 
 
-### Step 7: Build Frontend
+### Step 6: Build Frontend
 Run the following command to build React frontend:
 ```bash
 cd frontend && npm run build && cd ..
 ```
 
-### Step 8: Deploy DarkCircuit App
+### Step 7: Deploy DarkCircuit App
 Run the following command from your terminal to deploy your DarkCircuit app to Modal:
 ```bash
 modal deploy darkcircuit_app.py
 ```
 
-### Step 9: Connect to HackTheBox
+### Step 8: Connect to HackTheBox
 ![Click on connect using Pwnbox.](starting_point.png)
 
 1. Go to [HackTheBox](https://app.hackthebox.com/starting-point) platform, navigate to `Starting Point`, and select a challenge.
@@ -109,6 +97,9 @@ modal deploy darkcircuit_app.py
 > [!CAUTION]
 > SSH Terminal will not connect until Pwnbox's `INSTANCE LIFETIME` clock has started.
 
+### Step 9: Experimentation
+You can try out different OpenAI models and system prompts easily by clicking the `AI Configuration` button in the Chat Interface without having to re-deploy the app. You can permanently change the app's default system prompts by editing `/full-modal-deployment/frontend/public/prompts.json` and re-doing [Step 6](#step-6-build-frontend) and [Step 7](#step-7-deploy-darkcircuit-app).
+
 
 ## Future Development
-At the moment, the Ollama LLMs do not have RAG or are able to interact directly with the Pwnbox instance. The [Coding Agent example](https://modal.com/docs/examples/agent) on Modal's documentation may be a good starting point for integrating these concepts into the current implementation. Instead of the sandbox container, DarkCircuit has a connection with a Pwnbox instance. As such, the `run_ssh_command()` method in `darkcircuit_app.py` could be used instead of the `run()` method defined in `agent.py` of Modal's [repo](https://github.com/modal-labs/modal-examples/tree/main/13_sandboxes/codelangchain) by the agent to run code. Any changes made to incorporate these things should probably be made to `darkcircuit_app.py`. To re-deploy after changes just delete the `DarkCircuit` app using the Modal dashboard and re-run the command in [Step 7](#step-7-deploy-darkcircuit-app).
+Any changes made to incorporate these things should probably be made to `darkcircuit_app.py` or `darkcircuit_agent.py`. To re-deploy after changes just delete the `DarkCircuit` app using the Modal dashboard and re-run the command in [Step 7](#step-7-deploy-darkcircuit-app).

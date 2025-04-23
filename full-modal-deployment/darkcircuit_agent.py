@@ -108,7 +108,6 @@ class StreamingHandler(BaseCallbackHandler):
             await self.queue.put({"type": "token", "value": self.buffer})
         await self.queue.put("__END__")
 
-
 class Darkcircuit_Agent:
     def __init__(self, model_name="gpt-4o-mini", reasoning_prompt=None, response_prompt=None):
 
@@ -159,35 +158,8 @@ class Darkcircuit_Agent:
         self.tools = [self.search, self.run_command, self.rag_retrieve]
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
-        DEFAULT_REASONING_PROMPT = """You are a multi-step problem solver. Always follow this pattern:
-
-        1. Analyze the user request.
-        2. Decide if a tool is needed (search or command).
-        3. Use the tool and analyze the result.
-        4. ONLY when you have everything you need and are fully prepared to give the final answer, conclude with the exact phrase: [Ready to answer]
-
-        IMPORTANT: 
-        - Do NOT use the phrase [Ready to answer] anywhere in your thinking process except as the final signal.
-        - Do NOT output the final answer here - only think through the steps.
-        - Do NOT repeat the instructions or the [Ready to answer] phrase when outlining your approach.
-        - If you need to use a tool, clearly indicate which tool you want to use and what input you're providing.
-        - Avoid repeating tool actions indefinitely. If a tool result is unclear or incomplete after 3 tries, stop and respond.
-        - If a command might run forever (like 'ping'), make sure it has a limit (e.g., 'ping -c 4').
-        - For network scanning commands like nmap that can take a long time, consider adding the --min-rate parameter to speed up scanning.
-
-        Hack The Box Challenges:
-        - If the user asks to analyze, enumerate, or exploit a Hack The Box machine (e.g., "Start on Dancing at <target_ip>"):
-            - Use your own knowledge and the RAG tool to gather relevant context about the machine.
-            - Determine which recon or exploit commands would help investigate the machine based on its name, known ports, or CVEs.
-            - Use the 'run_command' tool to execute those commands automatically over SSH.
-            - You may run multiple useful commands in sequence without asking for confirmation.
-            - Always analyze each command's output before deciding what to do next.
-            - Keep safety in mind and avoid dangerous commands like `rm`, `shutdown`, `:(){ :|: & };:` or infinite loops.
-
-        Begin your analysis now.
-        """
-
-        DEFAULT_RESPONSE_PROMPT = "Now answer the user's question clearly and concisely based on previous analysis and tool results."
+        # Load default prompts from file
+        DEFAULT_REASONING_PROMPT, DEFAULT_RESPONSE_PROMPT = self.load_prompts()
 
         self.reasoning_prompt = SystemMessage(content=reasoning_prompt or DEFAULT_REASONING_PROMPT)
         self.response_prompt = SystemMessage(content=response_prompt or DEFAULT_RESPONSE_PROMPT)
@@ -612,3 +584,16 @@ class Darkcircuit_Agent:
                 yield event
         finally:
             await graph_task
+
+    def load_prompts(self):
+        """Load prompts from the shared JSON file in the frontend public directory"""
+        try:
+            prompt_file_path = 'prompts.json'
+
+            with open(prompt_file_path, 'r') as file:
+                prompts = json.load(file)
+                print(prompts)
+            return prompts.get('reasonerPrompt'), prompts.get('responderPrompt')
+        except Exception as e:
+            print(f"Error loading prompts: {str(e)}")
+            return None, None

@@ -6,6 +6,7 @@ app_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("fastapi[standard]", "httpx", "paramiko", "ollama", "langchain", "sseclient-py", "langchain_community", "langgraph", "langchain_core", "langchain_openai", "duckduckgo-search==7.5.5", "langchain_text_splitters", "pypdf", "fastembed", "faiss-cpu", "modal")
     .add_local_dir("docs", remote_path="/docs")
+    .add_local_file("frontend/public/prompts.json", "/root/prompts.json")
     .add_local_python_source("darkcircuit_agent")
     .add_local_python_source("Rag_tool")
 )

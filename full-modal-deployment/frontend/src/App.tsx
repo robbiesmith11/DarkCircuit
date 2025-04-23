@@ -17,6 +17,10 @@ function App() {
   const [isSshConnecting, setIsSshConnecting] = useState(false);
   const [sshConnectionError, setSshConnectionError] = useState<string | null>(null);
 
+  // Add state for target configuration
+  const [selectedChallenge, setSelectedChallenge] = useState('');
+  const [targetIp, setTargetIp] = useState('');
+
   // A ref to store the execute command function
   const executeCommandRef = useRef<((command: string, commandId?: number) => void) | null>(null);
 
@@ -178,35 +182,16 @@ function App() {
     executeCommandRef.current = fn;
   };
 
-  const handleServiceToggle = (service: string) => {
-    if (isSshConnected && executeCommandRef.current) {
-      let command = '';
-
-      switch (service) {
-        case 'apache':
-          command = 'sudo service apache2 restart';
-          break;
-        case 'squid':
-          command = 'sudo service squid restart';
-          break;
-        default:
-          toast.warning(`Unknown service: ${service}`);
-          return;
-      }
-
-      toast.info(`Toggling ${service} service...`);
-      // Safe to use ! here since we already checked it's not null above
-      executeCommandRef.current!(command);
-    } else {
-      toast.warning('Please connect to SSH first before managing services.');
-    }
-  };
-
   return (
     <div className="flex h-screen bg-black">
+      {/* Sidebar - Pass both challenge and IP state */}
       <Sidebar
-        onServiceToggle={handleServiceToggle}
+        selectedChallenge={selectedChallenge}
+        targetIp={targetIp}
+        onChallengeSelect={setSelectedChallenge}
+        onTargetIpChange={setTargetIp}
       />
+
       <div className="flex-1 p-4 overflow-auto">
         {/* Background logo */}
         <img
@@ -216,8 +201,12 @@ function App() {
         />
         <div className="grid grid-cols-2 gap-4 h-full">
           <div className="space-y-4 h-full">
-            {/* Pass the SSH command handler to ChatContainer */}
-            <ChatContainer onSshToolCall={handleSshToolCall} />
+            {/* Pass the SSH command handler and the challenge/IP data to ChatContainer */}
+            <ChatContainer
+              onSshToolCall={handleSshToolCall}
+              selectedChallenge={selectedChallenge}
+              targetIp={targetIp}
+            />
           </div>
           <div className="flex flex-col space-y-4 h-full">
             {/* SSH Connection Form or Terminal */}
