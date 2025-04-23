@@ -4,9 +4,32 @@ import teamLogo from '../../src/components/AICyberLabs_Logo_Blue.png';
 
 // Define the HTB challenge list
 const HTB_CHALLENGES = [
+  "Appointment",
+  "Archetype",
+  "Base",
+  "Bike",
+  "Crocodile",
   "Dancing",
+  "Explosion",
   "Fawn",
-  "Lame"
+  "Funnel",
+  "Ignition",
+  "Included",
+  "Lame",
+  "Markup",
+  "Meow",
+  "Mongod",
+  "Oopsie",
+  "Pennyworth",
+  "Preignition",
+  "Redeemer",
+  "Responder",
+  "Sequel",
+  "Synced",
+  "Tactics",
+  "Three",
+  "Unified",
+  "Vaccine"
 ];
 
 interface SimplifiedSidebarProps {
