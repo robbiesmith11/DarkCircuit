@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Info, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import teamLogo from '../../src/components/AICyberLabs_Logo_Blue.png';
 
@@ -28,24 +28,33 @@ export const Sidebar: React.FC<SimplifiedSidebarProps> = ({
 
   // Update local IP when prop changes
   useEffect(() => {
-    setLocalTargetIp(targetIp);
+    if (targetIp !== localTargetIp) {
+      setLocalTargetIp(targetIp);
+    }
   }, [targetIp]);
 
-  const openModal = () => setIsModalOpen(true);
-  const closeModal = () => setIsModalOpen(false);
-  const toggleSidebar = () => setIsCollapsed(!isCollapsed);
+  const openModal = useCallback(() => setIsModalOpen(true), []);
+  const closeModal = useCallback(() => setIsModalOpen(false), []);
+  const toggleSidebar = useCallback(() => setIsCollapsed(!isCollapsed), [isCollapsed]);
 
-  const handleChallengeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    onChallengeSelect(e.target.value);
-  };
+  // Update challenge handling
+  const handleChallengeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newChallenge = e.target.value;
+    console.log("Sidebar - challenge changed:", newChallenge);
+    onChallengeSelect(newChallenge);
+  }, [onChallengeSelect]);
 
-  const handleIpChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Update the target IP handling
+  const handleIpChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setLocalTargetIp(e.target.value);
-  };
+  }, []);
 
-  const handleIpBlur = () => {
+  // Important: This is where we update the parent's state
+  const handleIpBlur = useCallback(() => {
+    console.log("Sidebar - IP blur, sending value:", localTargetIp);
+    // Always update the parent to ensure consistent state
     onTargetIpChange(localTargetIp);
-  };
+  }, [localTargetIp, onTargetIpChange]);
 
   return (
     <div
@@ -122,6 +131,14 @@ export const Sidebar: React.FC<SimplifiedSidebarProps> = ({
                       value={localTargetIp}
                       onChange={handleIpChange}
                       onBlur={handleIpBlur}
+                      // Also update on Enter key
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handleIpBlur();
+                          // Blur the input to hide keyboard on mobile
+                          (e.target as HTMLInputElement).blur();
+                        }
+                      }}
                       placeholder="e.g. 10.129.203.101"
                       className="bg-gray-700 text-white px-4 py-2 rounded-lg w-full"
                   />

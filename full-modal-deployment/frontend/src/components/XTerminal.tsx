@@ -45,6 +45,14 @@ export const XTerminal: React.FC<XTerminalProps> = ({
     updateTimeout: NodeJS.Timeout | null,
     lastOutputLength: number
   }>>(new Map());
+  // Add a stable connection state reference to prevent race conditions
+  const connectionStateRef = useRef<{
+    isWebSocketClosing: boolean;
+    reconnectTimer: NodeJS.Timeout | null;
+  }>({
+    isWebSocketClosing: false,
+    reconnectTimer: null,
+  });
 
   // Initialize the terminal
   useEffect(() => {
@@ -331,8 +339,32 @@ export const XTerminal: React.FC<XTerminalProps> = ({
     };
   }, [isMaximized, terminalReady]);
 
-  // Create a dedicated websocket connection function
+  // Improved WebSocket connection management
   const connectWebSocket = () => {
+    // Clear any pending reconnect timer
+    if (connectionStateRef.current.reconnectTimer) {
+      clearTimeout(connectionStateRef.current.reconnectTimer);
+      connectionStateRef.current.reconnectTimer = null;
+    }
+
+    // Don't reconnect if we're in the process of closing
+    if (connectionStateRef.current.isWebSocketClosing) {
+      console.log('Skipping connection attempt: WebSocket is currently closing');
+      return;
+    }
+
+    // Don't attempt to connect if we're already connected or connecting
+    if (wsRef.current) {
+      if (wsRef.current.readyState === WebSocket.CONNECTING) {
+        console.log('WebSocket already connecting, skipping reconnect');
+        return;
+      }
+      if (wsRef.current.readyState === WebSocket.OPEN) {
+        console.log('WebSocket already connected, skipping reconnect');
+        return;
+      }
+    }
+
     // Reset reconnect attempts if this is a manual reconnection
     if (reconnectTrigger > 0) {
       reconnectAttemptsRef.current = 0;
@@ -340,27 +372,54 @@ export const XTerminal: React.FC<XTerminalProps> = ({
 
     // Close existing connection if any
     if (wsRef.current) {
-      // Only attempt to close if not already closed
-      if (wsRef.current.readyState !== WebSocket.CLOSED) {
-        unexpectedDisconnectRef.current = false; // Mark as expected disconnection
-        wsRef.current.close();
+      try {
+        // Only attempt to close if not already closed or closing
+        if (wsRef.current.readyState !== WebSocket.CLOSED && wsRef.current.readyState !== WebSocket.CLOSING) {
+          console.log('Closing existing WebSocket before creating new connection');
+          connectionStateRef.current.isWebSocketClosing = true;
+          unexpectedDisconnectRef.current = false; // Mark as expected disconnection
+          wsRef.current.close();
+
+          // Reset the closing flag after a timeout to prevent deadlocks
+          setTimeout(() => {
+            connectionStateRef.current.isWebSocketClosing = false;
+          }, 500);
+        }
+      } catch (err) {
+        console.error('Error closing WebSocket:', err);
       }
       wsRef.current = null;
     }
 
     // Don't proceed if we shouldn't be connected
     if (!isConnected || !webSocketUrl || !terminalReady) {
+      setStatus('disconnected');
       return;
     }
 
+    console.log('Connecting to WebSocket:', webSocketUrl);
     setStatus('connecting');
 
-    // Create new WebSocket
-    const ws = new WebSocket(webSocketUrl);
+    // Create new WebSocket with specific event handlers
+    let ws: WebSocket;
+
+    try {
+      ws = new WebSocket(webSocketUrl);
+    } catch (err) {
+      console.error('Error creating WebSocket:', err);
+      setStatus('disconnected');
+      return;
+    }
+
+    // Store the new WebSocket immediately
+    wsRef.current = ws;
 
     ws.onopen = () => {
+      console.log('WebSocket connected successfully');
       setStatus('connected');
       reconnectAttemptsRef.current = 0; // Reset reconnect attempts on successful connection
+      connectionStateRef.current.isWebSocketClosing = false;
+
       if (xtermRef.current) {
         xtermRef.current.writeln('\r\n\x1b[1;32mConnected to remote terminal.\x1b[0m\r\n');
       }
@@ -392,9 +451,12 @@ export const XTerminal: React.FC<XTerminalProps> = ({
     };
 
     ws.onclose = (event) => {
+      console.log('WebSocket onclose event fired, wasClean:', event.wasClean);
+
       // Mark this as unexpected disconnection if it wasn't a manual close
-      const wasUnexpected = !event.wasClean;
+      const wasUnexpected = !event.wasClean && !connectionStateRef.current.isWebSocketClosing;
       unexpectedDisconnectRef.current = wasUnexpected;
+      connectionStateRef.current.isWebSocketClosing = false;
 
       setStatus('disconnected');
 
@@ -412,7 +474,9 @@ export const XTerminal: React.FC<XTerminalProps> = ({
             // Use incremental backoff for reconnection attempts
             const backoffDelay = Math.min(1000 * Math.pow(1.5, reconnectAttemptsRef.current - 1), 8000);
 
-            setTimeout(() => {
+            // Use our reference for reconnect timer
+            connectionStateRef.current.reconnectTimer = setTimeout(() => {
+              connectionStateRef.current.reconnectTimer = null;
               setReconnectTrigger(prev => prev + 1);
             }, backoffDelay);
           } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
@@ -423,32 +487,64 @@ export const XTerminal: React.FC<XTerminalProps> = ({
     };
 
     ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
+      console.error('WebSocket error occurred:', error);
       // Don't set disconnected here, let onclose handle it
       if (xtermRef.current) {
         xtermRef.current.writeln('\r\n\x1b[1;31mWebSocket error occurred.\x1b[0m');
       }
     };
-
-    wsRef.current = ws;
   };
 
-  // Connect to WebSocket when ready and connected
+  // Connect to WebSocket when parameters change
   useEffect(() => {
-    connectWebSocket();
+    // Use RAF to ensure DOM updates complete before connection
+    const frameId = requestAnimationFrame(() => {
+      connectWebSocket();
+    });
 
-    // Return cleanup function
+    // Cleanup function - only close on unmount
     return () => {
-      if (wsRef.current) {
-        unexpectedDisconnectRef.current = false; // Mark as expected disconnection
-        wsRef.current.close();
-        wsRef.current = null;
-      }
+      cancelAnimationFrame(frameId);
     };
   }, [webSocketUrl, isConnected, terminalReady, reconnectTrigger]);
 
+  // Separate cleanup effect that only runs on unmount
+  useEffect(() => {
+    // Return cleanup function for component unmount
+    return () => {
+      console.log('Terminal component unmounting, cleaning up resources');
+
+      // Clean up any pending reconnect timers
+      if (connectionStateRef.current.reconnectTimer) {
+        clearTimeout(connectionStateRef.current.reconnectTimer);
+        connectionStateRef.current.reconnectTimer = null;
+      }
+
+      // Close WebSocket connection
+      if (wsRef.current) {
+        connectionStateRef.current.isWebSocketClosing = true;
+        unexpectedDisconnectRef.current = false; // Mark as expected disconnection
+        try {
+          wsRef.current.close();
+        } catch (err) {
+          console.error('Error closing WebSocket during unmount:', err);
+        }
+        wsRef.current = null;
+      }
+
+      // Clear any active timeouts
+      activeCommandsRef.current.forEach(cmd => {
+        if (cmd.updateTimeout) {
+          clearTimeout(cmd.updateTimeout);
+        }
+      });
+      activeCommandsRef.current.clear();
+    };
+  }, []);
+
   const disconnectTerminal = () => {
     unexpectedDisconnectRef.current = false; // Mark as expected disconnection
+    connectionStateRef.current.isWebSocketClosing = true;
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -539,4 +635,14 @@ export const XTerminal: React.FC<XTerminalProps> = ({
   );
 };
 
-export default XTerminal;
+// Wrap the component with React.memo and provide a custom comparison function
+export default React.memo(XTerminal, (prevProps, nextProps) => {
+  // Only re-render if these specific props change
+  return (
+    prevProps.webSocketUrl === nextProps.webSocketUrl &&
+    prevProps.isConnected === nextProps.isConnected &&
+    prevProps.onDisconnect === nextProps.onDisconnect
+    // Intentionally not comparing registerExecuteCommand and onTerminalOutput functions
+    // as they might be recreated on parent renders
+  );
+});

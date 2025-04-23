@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { ChatInterface } from './ChatInterface';
 import { ChatMessage, Model, DebugEvent } from '../types';
 import { toast } from 'react-toastify';
@@ -35,61 +35,74 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     pendingPromise: Promise<string>;
   }>>(new Map());
 
+  // Create a ref to store the current values of selected challenge and target IP
+  const selectedChallengeRef = useRef(selectedChallenge);
+  const targetIpRef = useRef(targetIp);
+
+  // Update refs when props change
+  useEffect(() => {
+    selectedChallengeRef.current = selectedChallenge;
+  }, [selectedChallenge]);
+
+  useEffect(() => {
+    targetIpRef.current = targetIp;
+  }, [targetIp]);
+
   // Add state for system prompts with default values
-const [reasonerPrompt, setReasonerPrompt] = useState<string>("");
-const [responderPrompt, setResponderPrompt] = useState<string>("");
+  const [reasonerPrompt, setReasonerPrompt] = useState<string>("");
+  const [responderPrompt, setResponderPrompt] = useState<string>("");
 
-// Modified to accept prompts as parameters
-const createModels = (reasonerPrompt: string, responderPrompt: string) => {
-  const predefinedModels: Model[] = [
-        {
-          model: "gpt-4.1",
-          displayName: "GPT-4.1",
-          reasonerPrompt: reasonerPrompt,
-          responderPrompt: responderPrompt
-        },
-        {
-          model: "gpt-4o",
-          displayName: "GPT-4o",
-          reasonerPrompt: reasonerPrompt,
-          responderPrompt: responderPrompt
-        },
-        {
-          model: "gpt-4o-mini",
-          displayName: "GPT-4o Mini",
-          reasonerPrompt: reasonerPrompt,
-          responderPrompt: responderPrompt
-        },
-        {
-          model: "gpt-3.5-turbo",
-          displayName: "GPT-3.5 Turbo",
-          reasonerPrompt: reasonerPrompt,
-          responderPrompt: responderPrompt
-        },
-        {
-          model: "o4",
-          displayName: "o4",
-          reasonerPrompt: reasonerPrompt,
-          responderPrompt: responderPrompt
-        },
-        {
-          model: "o4-mini",
-          displayName: "o4-mini",
-          reasonerPrompt: reasonerPrompt,
-          responderPrompt: responderPrompt
-        },
-        {
-          model: "o4-mini-high",
-          displayName: "o4-mini-high",
-          reasonerPrompt: reasonerPrompt,
-          responderPrompt: responderPrompt
-        },
-      ]
+  // Modified to accept prompts as parameters
+  const createModels = useCallback((reasonerPrompt: string, responderPrompt: string) => {
+    const predefinedModels: Model[] = [
+      {
+        model: "gpt-4.1",
+        displayName: "GPT-4.1",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "gpt-4o",
+        displayName: "GPT-4o",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "gpt-4o-mini",
+        displayName: "GPT-4o Mini",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "gpt-3.5-turbo",
+        displayName: "GPT-3.5 Turbo",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "o4",
+        displayName: "o4",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "o4-mini",
+        displayName: "o4-mini",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "o4-mini-high",
+        displayName: "o4-mini-high",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+    ]
 
-      // Use predefined models if API returns empty
-      setModels(predefinedModels);
-      setSelectedModel('gpt-4o-mini');  // Default to a predefined model
-  };
+    // Use predefined models if API returns empty
+    setModels(predefinedModels);
+    setSelectedModel('gpt-4o-mini');  // Default to a predefined model
+  }, []);
 
   useEffect(() => {
     const initialize = async () => {
@@ -131,44 +144,86 @@ const createModels = (reasonerPrompt: string, responderPrompt: string) => {
     initialize();
 
     return () => abortControllerRef.current?.abort();
-  }, []);
+  }, [createModels]);
 
-const handleSendMessage = async (message: string) => {
-  if (abortControllerRef.current) {
-    abortControllerRef.current.abort();
-  }
+  const handleSendMessage = useCallback(async (message: string) => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
 
-  // Reset debug events for new conversation
-  setDebugEvents([]);
+      // Reset debug events for new conversation
+      setDebugEvents([]);
 
-  // Modify message for first message in conversation
-  let finalMessage = message;
-  if (isFirstMessage && (selectedChallenge || targetIp)) {
-    let suffix = '\n\n'; // Start with line breaks after the original message
+      // Modify message for first message in conversation - log current values from refs for debugging
+      let finalMessage = message;
+      if (isFirstMessage) {
+        console.log("First message handling - Current values:", {
+          selectedChallenge: selectedChallengeRef.current,
+          targetIp: targetIpRef.current
+        });
 
-    if (selectedChallenge) {
-      suffix += `HackTheBox challenge: ${selectedChallenge}\n`;
-    }
+        // Explicitly check if either value has content (not just if the ref exists)
+        const hasChallenge = selectedChallengeRef.current && selectedChallengeRef.current.trim() !== '';
+        const hasTargetIp = targetIpRef.current && targetIpRef.current.trim() !== '';
 
-    if (targetIp) {
-      suffix += `Target IP: ${targetIp}\n`;
-    }
+        if (hasChallenge || hasTargetIp) {
+          let suffix = '\n\n'; // Start with line breaks after the original message
 
-    if (suffix !== '\n\n') {
-      finalMessage = finalMessage + suffix;
-      // Log the modified message to debug
+          if (hasChallenge) {
+            suffix += `HackTheBox challenge: ${selectedChallengeRef.current}\n`;
+          }
+
+          if (hasTargetIp) {
+            suffix += `Target IP: ${targetIpRef.current}\n`;
+          }
+
+          if (suffix !== '\n\n') {
+            finalMessage = finalMessage + suffix;
+            // Log the modified message to debug
+            setDebugEvents(prev => [...prev, {
+              type: 'thinking',
+              timestamp: new Date(),
+              content: `Modified first message with target info: ${finalMessage}`
+            }]);
+          }
+        }
+
+        // No longer the first message after sending
+        setIsFirstMessage(false);
+      }
+
+    // Prepend chat history to give context to the agent
+    // but only if we have previous messages
+    if (chatHistory.length > 0) {
+      // Create a formatted conversation history string
+      let conversationContext = "Previous conversation:\n";
+
+      // Limit to the last 10 messages to avoid context length issues
+      const recentMessages = chatHistory.slice(-10);
+
+      recentMessages.forEach(msg => {
+        if (msg.role === 'user') {
+          conversationContext += `User: ${msg.content}\n`;
+        } else if (msg.role === 'assistant') {
+          conversationContext += `Assistant: ${msg.content}\n`;
+        }
+      });
+
+      // Add a separator to distinguish between history and new query
+      conversationContext += "\n--- New message ---\n";
+
+      // Combine history with the new message
+      finalMessage = conversationContext + finalMessage;
+
+      // Log the context addition to debug panel
       setDebugEvents(prev => [...prev, {
         type: 'thinking',
         timestamp: new Date(),
-        content: `Modified first message with target info: ${finalMessage}`
+        content: `Added conversation context to message (${recentMessages.length} previous messages)`
       }]);
     }
 
-    // No longer the first message after sending
-    setIsFirstMessage(false);
-  }
-
-    const userMessage: ChatMessage = { role: 'user', content: finalMessage };
+    const userMessage: ChatMessage = { role: 'user', content: message }; // Original message for display
     // Add user message and create an empty assistant message
     setChatHistory((prev) => [...prev, userMessage, { role: 'assistant', content: '', isMarkdown: false }]);
 
@@ -193,17 +248,10 @@ const handleSendMessage = async (message: string) => {
 
       const requestBody: ChatRequestBody = {
         model: selectedModel,
-        messages: [{ role: 'user', content: finalMessage }]
+        messages: [{ role: 'user', content: finalMessage }], // Use the final message with context
+        reasoner_prompt: reasonerPrompt,
+        responder_prompt: responderPrompt
       };
-
-      // Add system prompts if they exist
-      if (reasonerPrompt) {
-        requestBody.reasoner_prompt = reasonerPrompt;
-      }
-
-      if (responderPrompt) {
-        requestBody.responder_prompt = responderPrompt;
-      }
 
       const res = await fetch(`${BACKEND_API}/api/chat/completions`, {
         method: 'POST',
@@ -418,10 +466,10 @@ const handleSendMessage = async (message: string) => {
       // Set streaming flag to false when complete
       setIsStreaming(false);
     }
-  };
+  }, [BACKEND_API, chatHistory.length, isFirstMessage, onSshToolCall, reasonerPrompt, responderPrompt, selectedModel]);
 
   // Handle clearing the chat and resetting the first message flag
-  const handleClearChat = () => {
+  const handleClearChat = useCallback(() => {
     // Abort any ongoing requests first
     if (abortControllerRef.current) {
       console.log('Aborting ongoing request...');
@@ -446,14 +494,29 @@ const handleSendMessage = async (message: string) => {
     setIsFirstMessage(true); // Reset first message flag so the next message will include challenge/IP info
 
     toast.info("Chat cleared and all operations stopped");
-  };
+  }, []);
 
   // Handle prompt updates
-  const handleUpdateSystemPrompts = (newReasonerPrompt: string, newResponderPrompt: string) => {
+  const handleUpdateSystemPrompts = useCallback((newReasonerPrompt: string, newResponderPrompt: string) => {
     setReasonerPrompt(newReasonerPrompt);
     setResponderPrompt(newResponderPrompt);
     toast.success("System prompts updated successfully");
-  };
+  }, []);
+
+  // Use memoized toggle debug function
+  const toggleDebugPanel = useCallback(() => {
+    setShowDebugPanel(prev => !prev);
+  }, []);
+
+  // Use memoized function for model selection
+  const handleModelSelect = useCallback((model: string) => {
+    setSelectedModel(model);
+  }, []);
+
+  // Use memoized function for debug events clearing
+  const handleClearDebugEvents = useCallback(() => {
+    setDebugEvents([]);
+  }, []);
 
   return (
     <div className="h-full bg-black flex flex-col max-h-screen">
@@ -464,9 +527,9 @@ const handleSendMessage = async (message: string) => {
           chatHistory={chatHistory}
           onSendMessage={handleSendMessage}
           onClearChat={handleClearChat}  // Use our new clear handler
-          onModelSelect={setSelectedModel}
+          onModelSelect={handleModelSelect}
           selectedModel={selectedModel}
-          onToggleDebug={() => setShowDebugPanel(!showDebugPanel)}
+          onToggleDebug={toggleDebugPanel}
           showDebugPanel={showDebugPanel}
           isStreaming={isStreaming}
           onUpdateSystemPrompts={handleUpdateSystemPrompts}
@@ -478,7 +541,7 @@ const handleSendMessage = async (message: string) => {
         <div className="h-64 border-t border-gray-700 overflow-hidden flex-shrink-0">
           <DebugPanel
             events={debugEvents}
-            onClear={() => setDebugEvents([])}
+            onClear={handleClearDebugEvents}
           />
         </div>
       )}

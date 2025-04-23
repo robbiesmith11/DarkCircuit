@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ChatContainer } from './components/ChatContainer';
 import { ToolShortcuts } from './components/ToolShortcuts';
@@ -77,8 +77,8 @@ function App() {
     }
   };
 
-  // Handle SSH disconnection
-  const handleSshDisconnect = async () => {
+  // Handle SSH disconnection - memoize to prevent recreation
+  const handleSshDisconnect = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/ssh/disconnect`, {
         method: 'POST',
@@ -96,19 +96,20 @@ function App() {
       console.error('Error disconnecting SSH:', error);
       toast.error(`Error disconnecting SSH: ${error instanceof Error ? error.message : String(error)}`);
     }
-  };
+  }, [API_BASE_URL]);
 
-  const handleToolClick = (command: string) => {
+  // Memoize the tool click handler
+  const handleToolClick = useCallback((command: string) => {
     if (executeCommandRef.current) {
       executeCommandRef.current(command);
     } else {
       console.log(`Tool command requested, but terminal not ready: ${command}`);
       toast.warning('Terminal not ready. Please try again in a moment.');
     }
-  };
+  }, []);
 
-  // Function to handle SSH commands from the ChatContainer
-  const handleSshToolCall = async (command: string, commandId?: number): Promise<string> => {
+  // Function to handle SSH commands from the ChatContainer - memoize to prevent recreation
+  const handleSshToolCall = useCallback(async (command: string, commandId?: number): Promise<string> => {
     if (isSshConnected && executeCommandRef.current) {
       if (commandId !== undefined) {
         return new Promise<string>((resolve) => {
@@ -119,7 +120,6 @@ function App() {
           executeCommandRef.current!(command, commandId);
 
           // Set a timeout to resolve the promise after some time if not resolved
-          // Increase timeout from 15s to 60s for longer-running commands
           setTimeout(() => {
             // Check if this command is still pending
             if (pendingCommandsRef.current.has(commandId)) {
@@ -129,7 +129,7 @@ function App() {
                 pendingCommandsRef.current.delete(commandId);
               }
             }
-          }, 60000); // Increased to 60 seconds
+          }, 60000); // 60 seconds timeout
         });
       } else {
         // For commands without an ID, just execute without waiting for output
@@ -141,10 +141,10 @@ function App() {
       toast.warning('Terminal not connected. Please connect SSH to execute commands.');
       return "Terminal not connected";
     }
-  };
+  }, [isSshConnected]);
 
-  // Handle terminal output
-  const handleTerminalOutput = (commandId: number, output: string, isPartial: boolean = false) => {
+  // Handle terminal output - memoize to prevent recreation
+  const handleTerminalOutput = useCallback((commandId: number, output: string, isPartial: boolean = false) => {
     console.log(`Received terminal output for command ${commandId} (${isPartial ? 'partial' : 'complete'}): ${output.substring(0, 100)}...`);
 
     // Send all outputs to the backend (both partial and complete)
@@ -157,7 +157,7 @@ function App() {
       pendingCommand.resolve(output);
       pendingCommandsRef.current.delete(commandId);
     }
-  };
+  }, []);
 
   // Send output to backend API
   const sendOutputToBackend = async (commandId: number, output: string, isPartial: boolean = false) => {
@@ -178,18 +178,36 @@ function App() {
     }
   };
 
-  const registerExecuteCommand = (fn: (command: string, commandId?: number) => void) => {
+  // Memoize the registerExecuteCommand function
+  const registerExecuteCommand = useCallback((fn: (command: string, commandId?: number) => void) => {
     executeCommandRef.current = fn;
-  };
+  }, []);
+
+  // Memoize the challenge selection handler
+  const handleChallengeSelect = useCallback((challenge: string) => {
+    console.log("Selecting challenge:", challenge);
+    setSelectedChallenge(challenge);
+  }, []);
+
+  // Memoize the target IP change handler
+  const handleTargetIpChange = useCallback((ip: string) => {
+    console.log("Updating target IP:", ip);
+    setTargetIp(ip);
+  }, []);
+
+  // For debugging
+  useEffect(() => {
+    console.log("App state updated:", { selectedChallenge, targetIp });
+  }, [selectedChallenge, targetIp]);
 
   return (
     <div className="flex h-screen bg-black">
-      {/* Sidebar - Pass both challenge and IP state */}
+      {/* Sidebar - Pass handlers */}
       <Sidebar
         selectedChallenge={selectedChallenge}
         targetIp={targetIp}
-        onChallengeSelect={setSelectedChallenge}
-        onTargetIpChange={setTargetIp}
+        onChallengeSelect={handleChallengeSelect}
+        onTargetIpChange={handleTargetIpChange}
       />
 
       <div className="flex-1 p-4 overflow-auto">
@@ -201,7 +219,7 @@ function App() {
         />
         <div className="grid grid-cols-2 gap-4 h-full">
           <div className="space-y-4 h-full">
-            {/* Pass the SSH command handler and the challenge/IP data to ChatContainer */}
+            {/* Pass the SSH command handler and the actual state values */}
             <ChatContainer
               onSshToolCall={handleSshToolCall}
               selectedChallenge={selectedChallenge}
