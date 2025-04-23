@@ -1,6 +1,6 @@
 import os
 import asyncio
-import paramiko
+import json
 from langchain_openai import ChatOpenAI
 from langchain_community.tools import DuckDuckGoSearchRun
 from langgraph.graph import StateGraph, START, END
@@ -8,7 +8,10 @@ from langgraph.prebuilt import ToolNode
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_core.callbacks.base import BaseCallbackHandler
-import json
+import time
+from modal import Dict
+
+from Rag_tool import *
 
 MessagesState = dict
 
@@ -105,66 +108,61 @@ class StreamingHandler(BaseCallbackHandler):
             await self.queue.put({"type": "token", "value": self.buffer})
         await self.queue.put("__END__")
 
-
 class Darkcircuit_Agent:
-    def __init__(self):
+    def __init__(self, model_name="gpt-4o-mini", reasoning_prompt=None, response_prompt=None):
+
         api_key = os.environ["OPENAI_API_KEY"]
 
-        self.llm = ChatOpenAI(model="gpt-4o-mini", streaming=True, api_key=api_key)
-        self.ssh_client = None
+        self.llm = ChatOpenAI(model=model_name, streaming=True, api_key=api_key)
         self.streaming_handler = None
+        self.terminal_output_queue = asyncio.Queue()
+        self.terminal_command_id = 0
+        self.current_command_output = ""
 
         self.search = DuckDuckGoSearchRun()
 
         @tool
-        def run_command(command: str) -> str:
-            """Execute a command on the remote SSH server"""
+        def rag_retrieve(query: str) -> str:
+            """Search for relevant documents included are writeups from hack the box challenges using RAG"""
+            retriever = load_static_rag_context()
+            docs = retriever.get_relevant_documents(query)
+            content_parts = []
+            for i, doc in enumerate(docs):
+                metadata = doc.metadata
+                content_parts.append(f"[Source {i + 1}] {doc.page_content}")
+            return "\n\n".join(content_parts)
+
+        @tool
+        async def run_command(command: str) -> str:
+            """Execute a command on the remote SSH server through the UI terminal."""
             try:
-                self._establish_ssh_connection()
-                if not self.ssh_client:
-                    return "Error: No SSH connection. Please connect first."
+                # Generate a unique ID for this command execution
+                self.terminal_command_id += 1
+                command_id = self.terminal_command_id
 
-                # Execute the command
-                transport = self.ssh_client.get_transport()
-                chan = transport.open_session()
-                chan.exec_command(command)
+                # Tell the frontend to execute the command
+                await self.streaming_handler.queue.put({
+                    "type": "ui_terminal_command",
+                    "command": command,
+                    "command_id": command_id
+                })
 
-                # Read output as bytes
-                stdout_bytes = chan.makefile("r").read()
-                stderr_bytes = chan.makefile_stderr("r").read()
-                chan.close()
+                # Wait for output using the file-based approach
+                return await self._wait_for_terminal_output(command_id)
 
-                # Decode bytes to UTF-8 strings with error handling
-                stdout = stdout_bytes.decode('utf-8', errors='replace') if isinstance(stdout_bytes,
-                                                                                      bytes) else stdout_bytes
-                stderr = stderr_bytes.decode('utf-8', errors='replace') if isinstance(stderr_bytes,
-                                                                                      bytes) else stderr_bytes
-
-                return stdout + stderr
             except Exception as e:
                 return f"Error executing command: {str(e)}"
 
         self.run_command = run_command
-        self.tools = [self.search, self.run_command]
+        self.rag_retrieve = rag_retrieve
+        self.tools = [self.search, self.run_command, self.rag_retrieve]
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
-        self.reasoning_prompt = SystemMessage(content="""You are a multi-step problem solver. Always follow this pattern:
+        # Load default prompts from file
+        DEFAULT_REASONING_PROMPT, DEFAULT_RESPONSE_PROMPT = self.load_prompts()
 
-        1. Analyze the user request.
-        2. Decide if a tool is needed (search or command).
-        3. Use the tool and analyze the result.
-        4. ONLY when you have everything you need and are fully prepared to give the final answer, conclude with the exact phrase: 'Ready to answer.'
-
-        IMPORTANT: 
-        - Do NOT use the phrase 'Ready to answer' anywhere in your thinking process except as the final signal.
-        - Do NOT output the final answer here - only think through the steps.
-        - Do NOT repeat the instructions or the 'Ready to answer' phrase when outlining your approach.
-        - If you need to use a tool, clearly indicate which tool you want to use and what input you're providing.
-
-        Begin your analysis now.
-        """)
-        self.response_prompt = SystemMessage(
-            content="Now answer the user's question clearly and concisely based on previous analysis and tool results.")
+        self.reasoning_prompt = SystemMessage(content=reasoning_prompt or DEFAULT_REASONING_PROMPT)
+        self.response_prompt = SystemMessage(content=response_prompt or DEFAULT_RESPONSE_PROMPT)
 
         builder = StateGraph(MessagesState)
         builder.add_node("reasoner", self.reasoner)
@@ -177,49 +175,104 @@ class Darkcircuit_Agent:
 
         self.react_graph = builder.compile()
 
-    def _establish_ssh_connection(self):
-        try:
-            # Load connection parameters from the volume
-            with open("/ssh_data/connection_params.json", "r") as f:
-                conn_params = json.load(f)
+    # Define the method properly at the class level
+    async def _wait_for_terminal_output(self, command_id):
+        """Wait for terminal output using Modal's shared Dict with timestamp validation."""
+        session_start_time = time.time()
+        command_id_str = str(command_id)
 
-            # Establish a fresh connection
-            client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # Get a reference to the shared dict
+        command_results = Dict.from_name("terminal-command-results")
 
-            # Connect using saved parameters
-            connect_kwargs = {
-                'hostname': conn_params["host"],
-                'port': conn_params["port"],
-                'username': conn_params["username"],
-                'timeout': 10,
-                'banner_timeout': 15,
-                'allow_agent': False,
-                'look_for_keys': False
-            }
+        # Track partial outputs
+        last_output = ""
+        last_output_time = time.time()
+        seen_partial = False
 
-            # Add auth method
-            if conn_params.get("key_path"):
-                if conn_params.get("password"):
-                    key = paramiko.RSAKey.from_private_key_file(
-                        conn_params["key_path"],
-                        password=conn_params["password"]
-                    )
-                    connect_kwargs['pkey'] = key
+        print(f"Waiting for output of command {command_id}")
+
+        while True:
+            # Check timeouts
+            if time.time() - session_start_time > 300:  # 5 minute absolute timeout
+                return f"Command timed out after 5 minutes. Last output:\n\n{last_output}"
+
+            if seen_partial and time.time() - last_output_time > 60:  # 1 minute without updates
+                return f"Command appears to have stalled. Last output:\n\n{last_output}"
+
+            # Check if result exists in the shared dict
+            if command_id_str in command_results:
+                result_data = command_results[command_id_str]
+
+                # Check if this is a proper dict with timestamp (new format)
+                if isinstance(result_data, dict) and "timestamp" in result_data:
+                    # Only use results from this session
+                    if result_data["timestamp"] >= session_start_time:
+                        result = result_data["output"]
+                        print(f"Found result for command {command_id}, length: {len(result)}")
+
+                        # Process result...
+                        partial_marker = "[Command still running... This is a partial output.]"
+                        if partial_marker in result:
+                            # Partial output handling...
+                            seen_partial = True
+                            if len(result) > len(last_output):
+                                last_output = result
+                                last_output_time = time.time()
+                            await asyncio.sleep(1.0)
+                            continue
+                        else:
+                            # This is the final result
+                            print(f"Received final output for command {command_id}")
+                            # Clean up
+                            try:
+                                del command_results[command_id_str]
+                            except:
+                                pass
+                            await asyncio.sleep(0.5)
+                            return result
+                    else:
+                        # This is an old result from a previous session, ignore it
+                        print(f"Ignoring stale result for command {command_id} from previous session")
+                        try:
+                            del command_results[command_id_str]
+                        except:
+                            pass
                 else:
-                    connect_kwargs['key_filename'] = conn_params["key_path"]
-            else:
-                connect_kwargs['password'] = conn_params["password"]
+                    # Old format (just string) or invalid data - handle for backward compatibility
+                    if isinstance(result_data, str):
+                        # Treat as final output and clean up
+                        print(f"Found old-format result for command {command_id}")
+                        result = result_data
+                        try:
+                            del command_results[command_id_str]
+                        except:
+                            pass
+                        await asyncio.sleep(0.5)
+                        return result
+                    else:
+                        # Invalid data, clean up
+                        print(f"Found invalid data for command {command_id}, cleaning up")
+                        try:
+                            del command_results[command_id_str]
+                        except:
+                            pass
 
-            client.connect(**connect_kwargs)
+            # Wait before checking again
+            await asyncio.sleep(0.5)
 
-            # Save the client
-            self.ssh_client = client
+    # Define the receive method properly at the class level
+    async def receive_terminal_output(self, output_data):
+        """Receive terminal output from the frontend.
 
-            return True
-        except Exception as e:
-            print(f"Error establishing SSH connection: {e}")
-            return False
+        This method is called by the backend when it receives terminal output
+        from the frontend through the /api/terminal/output endpoint.
+        """
+        await self.terminal_output_queue.put(output_data)
+        #print(output_data)
+        #print(self.terminal_output_queue.get())
+
+        # Also store the latest output for the current command
+        self.current_command_output = output_data.get("output", "")
 
     async def reasoner(self, state: MessagesState):
         print("[Agent] Entering reasoner node with message count:", len(state["messages"]))
@@ -278,7 +331,7 @@ class Darkcircuit_Agent:
             print(f"[Agent] Reasoner result preview: {result_text[:100]}...")
 
             # Determine if we're done based on the magic phrase
-            done = "ready to answer" in result_text
+            done = "[Ready to answer]" in result_text
             print(f"[Agent] Done status: {done}")
 
             # Flush the thinking buffer to send consolidated thinking content
@@ -307,26 +360,124 @@ class Darkcircuit_Agent:
         """Custom tools node to handle tool calls and preserve results as system messages"""
         print("[Agent] Entering tools node")
 
-        # Get the standard ToolNode to process the tool calls
-        tool_node = ToolNode(self.tools)
-        result_state = await tool_node.ainvoke(state)
+        # Get the last message which should contain the tool calls
+        last_message = state["messages"][-1] if state["messages"] else None
 
-        # Extract the tool results and convert them to system messages
-        preserved_messages = []
-        for msg in result_state["messages"]:
-            if isinstance(msg, ToolMessage):
-                # Convert tool message to system message
-                tool_name = getattr(msg, "name", "tool")
-                tool_content = getattr(msg, "content", "")
-                system_msg = SystemMessage(content=f"Tool result from {tool_name}: {tool_content}")
-                preserved_messages.append(system_msg)
-                # Also keep the original tool message for the LangGraph machinery
-                preserved_messages.append(msg)
+        # Extract tool calls from the message
+        tool_calls = []
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            tool_calls = last_message.tool_calls
+
+        # Process each tool call sequentially instead of using ToolNode
+        preserved_messages = list(state["messages"])
+
+        # Process tool calls one at a time
+        for tool_call in tool_calls:
+            tool_name = tool_call.get('name', 'unknown_tool')
+            tool_args = tool_call.get('args', {})
+
+            print(f"[Agent] Processing tool call: {tool_name} with args: {tool_args}")
+
+            # Find the matching tool
+            matching_tool = None
+            for tool in self.tools:
+                if hasattr(tool, 'name') and tool.name == tool_name:
+                    matching_tool = tool
+                    break
+
+            if matching_tool:
+                try:
+                    # Execute the tool with its arguments
+                    if tool_name == "run_command":
+                        # Special handling for run_command to ensure sequential execution
+                        # Extract command from arguments, handling different formats
+                        if isinstance(tool_args, dict) and 'command' in tool_args:
+                            command = tool_args['command']
+                        elif isinstance(tool_args, str):
+                            command = tool_args
+                        else:
+                            command = str(tool_args)
+
+                        print(f"[Agent] Executing command: {command}")
+
+                        # Add optimization hints for common long-running commands
+                        if 'nmap' in command and '--min-rate' not in command:
+                            # Check if this is a comprehensive scan that will take a long time
+                            if any(flag in command for flag in ['-sS', '-sV', '-A', '-p-']):
+                                # Add optimized version with hint
+                                command_original = command
+                                # Add min-rate parameter if not already present
+                                command = command + ' --min-rate=1000' if '--min-rate' not in command else command
+                                print(f"[Agent] Optimized slow nmap command: {command_original} -> {command}")
+
+                                # Add message about optimization
+                                system_msg = SystemMessage(
+                                    content=f"Optimizing potentially slow nmap command with --min-rate=1000 to speed up execution.")
+                                preserved_messages.append(system_msg)
+
+                        # Properly invoke the async method
+                        # The key change is using ainvoke instead of calling run_command directly
+                        result = await matching_tool.ainvoke(command)
+                    else:
+                        # For other tools, execute normally
+                        if isinstance(tool_args, dict):
+                            # For dict args, use the appropriate invocation
+                            result = await matching_tool.ainvoke(tool_args)
+                        else:
+                            # For simple string args
+                            result = await matching_tool.ainvoke(str(tool_args))
+
+                    # Convert result to a tool message
+                    tool_message = ToolMessage(
+                        content=result,
+                        name=tool_name,
+                        tool_call_id=tool_call.get('id', '')
+                    )
+
+                    # Also create a system message version for the agent to understand
+                    system_msg = SystemMessage(content=f"Tool result from {tool_name}: {result}")
+
+                    # Add both messages to preserved messages
+                    preserved_messages.append(system_msg)
+                    preserved_messages.append(tool_message)
+
+                    print(f"[Agent] Tool {tool_name} completed with result: {str(result)[:100]}...")
+
+                except Exception as e:
+                    error_msg = f"Error executing tool {tool_name}: {str(e)}"
+                    print(f"[Agent] {error_msg}")
+                    import traceback
+                    traceback.print_exc()
+
+                    # Create error messages
+                    error_tool_message = ToolMessage(
+                        content=error_msg,
+                        name=tool_name,
+                        tool_call_id=tool_call.get('id', '')
+                    )
+                    error_system_msg = SystemMessage(content=f"Tool error from {tool_name}: {error_msg}")
+
+                    # Add error messages
+                    preserved_messages.append(error_system_msg)
+                    preserved_messages.append(error_tool_message)
             else:
-                preserved_messages.append(msg)
+                error_msg = f"Tool {tool_name} not found"
+                print(f"[Agent] {error_msg}")
+
+                # Create not found messages
+                not_found_tool_message = ToolMessage(
+                    content=error_msg,
+                    name=tool_name,
+                    tool_call_id=tool_call.get('id', '')
+                )
+                not_found_system_msg = SystemMessage(content=f"Tool error: {error_msg}")
+
+                # Add not found messages
+                preserved_messages.append(not_found_system_msg)
+                preserved_messages.append(not_found_tool_message)
 
         # Update the state with preserved messages
-        return {**result_state, "messages": preserved_messages}
+        return {**state, "messages": preserved_messages}
 
     async def responder(self, state: MessagesState):
         print("[Agent] Entering responder node")
@@ -433,3 +584,16 @@ class Darkcircuit_Agent:
                 yield event
         finally:
             await graph_task
+
+    def load_prompts(self):
+        """Load prompts from the shared JSON file in the frontend public directory"""
+        try:
+            prompt_file_path = 'prompts.json'
+
+            with open(prompt_file_path, 'r') as file:
+                prompts = json.load(file)
+                print(prompts)
+            return prompts.get('reasonerPrompt'), prompts.get('responderPrompt')
+        except Exception as e:
+            print(f"Error loading prompts: {str(e)}")
+            return None, None

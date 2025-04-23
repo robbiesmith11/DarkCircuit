@@ -4,8 +4,11 @@ MINUTES = 60  # seconds
 
 app_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("fastapi[standard]", "httpx", "paramiko", "ollama", "langchain", "sseclient-py", "langchain_community", "langgraph", "langchain_core", "langchain_openai", "duckduckgo-search==7.5.5")
+    .pip_install("fastapi[standard]", "httpx", "paramiko", "ollama", "langchain", "sseclient-py", "langchain_community", "langgraph", "langchain_core", "langchain_openai", "duckduckgo-search==7.5.5", "langchain_text_splitters", "pypdf", "fastembed", "faiss-cpu", "modal")
+    .add_local_dir("docs", remote_path="/docs")
+    .add_local_file("frontend/public/prompts.json", "/root/prompts.json")
     .add_local_python_source("darkcircuit_agent")
+    .add_local_python_source("Rag_tool")
 )
 
 with app_image.imports():
@@ -14,6 +17,7 @@ with app_image.imports():
     import os
     import json
     import time
+    import modal
     from typing import Optional, List, Dict, Any
     from pydantic import BaseModel
     from fastapi import FastAPI, Request, WebSocket
@@ -35,6 +39,7 @@ with app_image.imports():
 app = modal.App("DarkCircuit")
 
 ssh_volume = modal.Volume.from_name("ssh_data", create_if_missing=True)
+command_results = modal.Dict.from_name("terminal-command-results", create_if_missing=True)
 
 # FastAPI private backend server
 @app.cls(
@@ -47,6 +52,16 @@ ssh_volume = modal.Volume.from_name("ssh_data", create_if_missing=True)
 class App:
     def __init__(self):
 
+        # Clear the command results dict at startup
+        try:
+            # Get all keys to avoid modifying during iteration
+            keys_to_delete = list(command_results.keys())
+            for key in keys_to_delete:
+                del command_results[key]
+            print(f"Cleared {len(keys_to_delete)} stale entries from command results dict")
+        except Exception as e:
+            print(f"Error clearing command results dict: {e}")
+
         # Store SSH connection information
         self.ssh_state = {
             "client": None,
@@ -55,6 +70,17 @@ class App:
             "error": None,
             "running": False
         }
+
+
+
+        # Store active agent instances
+        self.active_agents = {}
+        # Map command_ids to their responses
+        self.command_responses = {}
+        # Map WebSocket connections to their terminal output buffers
+        self.terminal_output_buffers = {}
+        # Store active WebSocket connections for terminals
+        self.active_terminal_connections = set()
 
         OllamaServer = modal.Cls.from_name("Ollama-Server", "OllamaServer")
         self.ollama_server = OllamaServer()
@@ -78,9 +104,13 @@ class App:
         class ChatRequest(BaseModel):
             model: str
             messages: List[ChatMessage]
+            reasoner_prompt: Optional[str] = None
+            responder_prompt: Optional[str] = None
 
-        class ModelPullRequest(BaseModel):
-            model: str
+
+        class TerminalOutput(BaseModel):
+            command_id: int
+            output: str
 
 
         # API endpoint to SSH and set up the terminal
@@ -112,30 +142,23 @@ class App:
             self._close_ssh_connection()
             return {"success": True, "message": "SSH connection closed"}
 
-        @self.fastapi_app.get("/api/models")
-        async def get_models():
-            """Get available models from Ollama"""
-            models = self.ollama_server.tags.remote()
-            return {"models": models}
 
-        @self.fastapi_app.post("/api/models/pull")
-        async def pull_model(req: ModelPullRequest):
-            """Pull a new model onto the Ollama server."""
-            try:
-                result = self.ollama_server.pull.remote(req.model)
-                return {"success": True, "message": f"Model '{req.model}' pulled successfully."}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
+        @self.fastapi_app.post("/api/terminal/output")
+        async def submit_terminal_output(output_data: TerminalOutput):
+            command_id = output_data.command_id
+            output = output_data.output
 
-        @self.fastapi_app.delete("/api/models/{model_name}")
-        async def delete_model(model_name: str):
-            """Delete a model from the Ollama server."""
-            try:
-                result = self.ollama_server.delete.remote(model_name)
-                return {"success": True, "message": f"Model '{model_name}' deleted successfully."}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
+            # Store in Modal's shared dict with timestamp
+            command_results[str(command_id)] = {
+                "output": output,
+                "timestamp": time.time(),
+                "session_id": id(self)  # Add unique session identifier
+            }
+            print(f"Stored output for command {command_id} in shared dict")
 
+            return {"success": True}
+
+        # REST API endpoint for chat completions with streaming
         @self.fastapi_app.post("/api/chat/completions")
         async def chat_completions(request: ChatRequest):
             """
@@ -145,68 +168,86 @@ class App:
             # Convert to format expected by Ollama
             prompt = request.messages[-1].content  # Take the latest user message as prompt
 
-            # Load connection parameters from the volume
-            with open("/ssh_data/connection_params.json", "r") as f:
-                conn_params = json.load(f)
-
-            print(f"main app: {conn_params}")
-
             # Run the LangGraph agent with the custom chat model
-            agent = Darkcircuit_Agent()
+            agent = Darkcircuit_Agent(
+                model_name=request.model,
+                reasoning_prompt=request.reasoner_prompt,
+                response_prompt=request.responder_prompt
+            )
+
+            # Store the agent for later reference (e.g., to receive terminal output)
+            agent_id = f"agent_{int(time.time())}"
+            self.active_agents[agent_id] = agent
 
             async def generate_stream():
-                async for event in agent.run_agent_streaming(prompt):
-                    event_type = event.get("type", "unknown")
+                try:
+                    async for event in agent.run_agent_streaming(prompt):
+                        event_type = event.get("type", "unknown")
 
-                    # For token events (chat content)
-                    if event_type == "token":
-                        token = event.get("value", "")
-                        data = {
-                            "id": f"chatcmpl-{int(time.time())}",
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": request.model,
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {"content": token, "role": "assistant"},
-                                    "finish_reason": None
-                                }
-                            ]
-                        }
-                        yield f"data: {json.dumps(data)}\n\n"
+                        # For token events (chat content)
+                        if event_type == "token":
+                            token = event.get("value", "")
+                            data = {
+                                "id": f"chatcmpl-{int(time.time())}",
+                                "object": "chat.completion.chunk",
+                                "created": int(time.time()),
+                                "model": request.model,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {"content": token, "role": "assistant"},
+                                        "finish_reason": None
+                                    }
+                                ]
+                            }
+                            yield f"data: {json.dumps(data)}\n\n"
 
-                    # For thinking, tool_call, and tool_result events
-                    elif event_type in ["thinking", "tool_call", "tool_result"]:
-                        # Forward these events directly for the debug panel
-                        yield f"data: {json.dumps(event)}\n\n"
+                        # For thinking, tool_call, and tool_result events
+                        elif event_type in ["thinking", "tool_call", "tool_result"]:
+                            # Forward these events directly for the debug panel
+                            yield f"data: {json.dumps(event)}\n\n"
 
-                # Final stop chunk
-                data = {
-                    "id": f"chatcmpl-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": request.model,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {},
-                            "finish_reason": "stop"
-                        }
-                    ]
-                }
-                yield f"data: {json.dumps(data)}\n\n"
-                yield "data: [DONE]\n\n"
+                        # For UI terminal command events
+                        elif event_type == "ui_terminal_command":
+                            # Forward the command to the UI for execution
+                            # This special event type will be handled by the frontend
+                            yield f"data: {json.dumps(event)}\n\n"
+
+                    # Final stop chunk
+                    data = {
+                        "id": f"chatcmpl-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": request.model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": "stop"
+                            }
+                        ]
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
+                    yield "data: [DONE]\n\n"
+                finally:
+                    # Clean up the agent after the conversation is complete
+                    if agent_id in self.active_agents:
+                        del self.active_agents[agent_id]
 
             return StreamingResponse(
                 generate_stream(),
                 media_type="text/event-stream"
             )
 
-        # FastAPI WebSocket endpoint for terminal
+        # WebSocket endpoint for terminal
         @self.fastapi_app.websocket("/ws/ssh-terminal")
         async def terminal_endpoint(websocket: WebSocket):
             await websocket.accept()
+
+            # Initialize the output buffer for this connection
+            connection_id = id(websocket)
+            self.terminal_output_buffers[connection_id] = ""
+            self.active_terminal_connections.add(websocket)
 
             try:
                 # Check if we have an SSH connection
@@ -258,6 +299,20 @@ class App:
                                 if data:
                                     # Send raw binary data for proper terminal rendering
                                     await websocket.send_bytes(data)
+
+                                    # Also add to the output buffer
+                                    if connection_id in self.terminal_output_buffers:
+                                        # Decode with error handling
+                                        try:
+                                            decoded_data = data.decode('utf-8', errors='replace')
+                                            self.terminal_output_buffers[connection_id] += decoded_data
+
+                                            # Limit buffer size to prevent memory issues
+                                            if len(self.terminal_output_buffers[connection_id]) > 10000:
+                                                self.terminal_output_buffers[connection_id] = \
+                                                self.terminal_output_buffers[connection_id][-10000:]
+                                        except Exception as e:
+                                            print(f"Error decoding terminal data: {e}")
                                 else:
                                     break
                             else:
@@ -298,18 +353,42 @@ class App:
 
                                 # Check message type
                                 if "text" in message:
-                                    data = message["text"].encode()
+                                    data = message["text"]
+
+                                    # Check if this is a special command for retrieving output
+                                    if data.startswith("__GET_OUTPUT__"):
+                                        try:
+                                            # Format: __GET_OUTPUT__<command_id>
+                                            parts = data.split("__")
+                                            if len(parts) >= 3:
+                                                command_id = int(parts[2])
+
+                                                # Get the current output buffer
+                                                current_buffer = self.terminal_output_buffers.get(connection_id, "")
+
+                                                # Send response with the current output buffer
+                                                await websocket.send_text(f"__OUTPUT__{command_id}__{current_buffer}")
+
+                                                # Reset the buffer after sending
+                                                self.terminal_output_buffers[connection_id] = ""
+                                        except Exception as e:
+                                            print(f"Error processing output request: {e}")
+                                            continue
+                                    else:
+                                        # Regular text command
+                                        data = data.encode()
+                                        channel.send(data)
+
                                 elif "bytes" in message:
                                     data = message["bytes"]
+                                    channel.send(data)
                                 else:
                                     continue
 
                                 # Handle special terminal commands
                                 if data == b'\x03':  # Ctrl+C
                                     channel.send(data)
-                                elif data.startswith(b'\x1b['):  # Terminal escape sequences
-                                    channel.send(data)
-                                else:
+                                elif isinstance(data, bytes) and data.startswith(b'\x1b['):  # Terminal escape sequences
                                     channel.send(data)
 
                             except asyncio.TimeoutError:
@@ -341,6 +420,12 @@ class App:
                     pass
 
             finally:
+                # Remove from active connections
+                if connection_id in self.terminal_output_buffers:
+                    del self.terminal_output_buffers[connection_id]
+                if websocket in self.active_terminal_connections:
+                    self.active_terminal_connections.remove(websocket)
+
                 # Clean up SSH channel but keep the SSH connection
                 if self.ssh_state["channel"]:
                     try:

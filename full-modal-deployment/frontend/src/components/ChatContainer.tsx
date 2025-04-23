@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { ChatInterface } from './ChatInterface';
 import { ChatMessage, Model, DebugEvent } from '../types';
 import { toast } from 'react-toastify';
@@ -8,10 +8,16 @@ const BACKEND_API = import.meta.env.VITE_BACKEND_API_URL || '';
 
 // Add a new onSshToolCall prop to receive execute command function
 interface ChatContainerProps {
-  onSshToolCall?: (command: string) => void;
+  onSshToolCall?: (command: string, commandId?: number) => Promise<string>;
+  selectedChallenge?: string;  // Add selected challenge prop
+  targetIp?: string;          // Add target IP prop
 }
 
-export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) => {
+export const ChatContainer: React.FC<ChatContainerProps> = ({
+  onSshToolCall,
+  selectedChallenge = '',
+  targetIp = ''
+}) => {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
@@ -21,39 +27,203 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
   const currentAssistantIndexRef = useRef<number>(-1);
   // Add a flag to track if a response is currently streaming
   const [isStreaming, setIsStreaming] = useState(false);
+  // Add a flag to track if it's the first message in the conversation
+  const [isFirstMessage, setIsFirstMessage] = useState(true);
+  // Add a map to store pending terminal commands
+  const pendingTerminalCommandsRef = useRef<Map<number, {
+    command: string;
+    pendingPromise: Promise<string>;
+  }>>(new Map());
 
-  const fetchModels = async () => {
-    try {
-      const res = await fetch(`${BACKEND_API}/api/models`);
-      const data = await res.json();
-      if (data.models?.length) {
-        setModels(data.models);
-        if (!selectedModel || !data.models.some((m: Model) => m.model === selectedModel)) {
-          setSelectedModel(data.models[0].model);
-        }
-      } else {
-        setModels([]);
-        setSelectedModel('');
-      }
-    } catch (error) {
-      toast.error(`Failed to fetch models: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
+  // Create a ref to store the current values of selected challenge and target IP
+  const selectedChallengeRef = useRef(selectedChallenge);
+  const targetIpRef = useRef(targetIp);
+
+  // Update refs when props change
+  useEffect(() => {
+    selectedChallengeRef.current = selectedChallenge;
+  }, [selectedChallenge]);
 
   useEffect(() => {
-    fetchModels();
-    return () => abortControllerRef.current?.abort();
+    targetIpRef.current = targetIp;
+  }, [targetIp]);
+
+  // Add state for system prompts with default values
+  const [reasonerPrompt, setReasonerPrompt] = useState<string>("");
+  const [responderPrompt, setResponderPrompt] = useState<string>("");
+
+  // Modified to accept prompts as parameters
+  const createModels = useCallback((reasonerPrompt: string, responderPrompt: string) => {
+    const predefinedModels: Model[] = [
+      {
+        model: "gpt-4.1",
+        displayName: "GPT-4.1",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "gpt-4o",
+        displayName: "GPT-4o",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "gpt-4o-mini",
+        displayName: "GPT-4o Mini",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "gpt-3.5-turbo",
+        displayName: "GPT-3.5 Turbo",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "o4",
+        displayName: "o4",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "o4-mini",
+        displayName: "o4-mini",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+      {
+        model: "o4-mini-high",
+        displayName: "o4-mini-high",
+        reasonerPrompt: reasonerPrompt,
+        responderPrompt: responderPrompt
+      },
+    ]
+
+    // Use predefined models if API returns empty
+    setModels(predefinedModels);
+    setSelectedModel('gpt-4o-mini');  // Default to a predefined model
   }, []);
 
-  const handleSendMessage = async (message: string) => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+  useEffect(() => {
+    const initialize = async () => {
+      try {
+        // Correct path - starts from the root of your web server
+        const response = await fetch('/prompts.json');
+
+        if (response.ok) {
+          const prompts = await response.json();
+
+          // Store in state
+          setReasonerPrompt(prompts.reasonerPrompt);
+          setResponderPrompt(prompts.responderPrompt);
+
+          // Create models with the loaded prompts
+          createModels(prompts.reasonerPrompt, prompts.responderPrompt);
+        } else {
+          console.warn("Couldn't find any default prompts!");
+          // Use fallback prompts
+          const fallbackReasoner = "Default reasoner prompt if JSON fails to load";
+          const fallbackResponder = "Default responder prompt if JSON fails to load";
+
+          setReasonerPrompt(fallbackReasoner);
+          setResponderPrompt(fallbackResponder);
+          createModels(fallbackReasoner, fallbackResponder);
+        }
+      } catch (error) {
+        console.error("Error loading prompts:", error);
+        // Handle error with fallbacks
+        const fallbackReasoner = "Default reasoner prompt if JSON fails to load";
+        const fallbackResponder = "Default responder prompt if JSON fails to load";
+
+        setReasonerPrompt(fallbackReasoner);
+        setResponderPrompt(fallbackResponder);
+        createModels(fallbackReasoner, fallbackResponder);
+      }
+    };
+
+    initialize();
+
+    return () => abortControllerRef.current?.abort();
+  }, [createModels]);
+
+  const handleSendMessage = useCallback(async (message: string) => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      // Reset debug events for new conversation
+      setDebugEvents([]);
+
+      // Modify message for first message in conversation - log current values from refs for debugging
+      let finalMessage = message;
+      if (isFirstMessage) {
+        console.log("First message handling - Current values:", {
+          selectedChallenge: selectedChallengeRef.current,
+          targetIp: targetIpRef.current
+        });
+
+        // Explicitly check if either value has content (not just if the ref exists)
+        const hasChallenge = selectedChallengeRef.current && selectedChallengeRef.current.trim() !== '';
+        const hasTargetIp = targetIpRef.current && targetIpRef.current.trim() !== '';
+
+        if (hasChallenge || hasTargetIp) {
+          let suffix = '\n\n'; // Start with line breaks after the original message
+
+          if (hasChallenge) {
+            suffix += `HackTheBox challenge: ${selectedChallengeRef.current}\n`;
+          }
+
+          if (hasTargetIp) {
+            suffix += `Target IP: ${targetIpRef.current}\n`;
+          }
+
+          if (suffix !== '\n\n') {
+            finalMessage = finalMessage + suffix;
+            // Log the modified message to debug
+            setDebugEvents(prev => [...prev, {
+              type: 'thinking',
+              timestamp: new Date(),
+              content: `Modified first message with target info: ${finalMessage}`
+            }]);
+          }
+        }
+
+        // No longer the first message after sending
+        setIsFirstMessage(false);
+      }
+
+    // Prepend chat history to give context to the agent
+    // but only if we have previous messages
+    if (chatHistory.length > 0) {
+      // Create a formatted conversation history string
+      let conversationContext = "Previous conversation:\n";
+
+      // Limit to the last 10 messages to avoid context length issues
+      const recentMessages = chatHistory.slice(-10);
+
+      recentMessages.forEach(msg => {
+        if (msg.role === 'user') {
+          conversationContext += `User: ${msg.content}\n`;
+        } else if (msg.role === 'assistant') {
+          conversationContext += `Assistant: ${msg.content}\n`;
+        }
+      });
+
+      // Add a separator to distinguish between history and new query
+      conversationContext += "\n--- New message ---\n";
+
+      // Combine history with the new message
+      finalMessage = conversationContext + finalMessage;
+
+      // Log the context addition to debug panel
+      setDebugEvents(prev => [...prev, {
+        type: 'thinking',
+        timestamp: new Date(),
+        content: `Added conversation context to message (${recentMessages.length} previous messages)`
+      }]);
     }
 
-    // Reset debug events for new conversation
-    setDebugEvents([]);
-
-    const userMessage: ChatMessage = { role: 'user', content: message };
+    const userMessage: ChatMessage = { role: 'user', content: message }; // Original message for display
     // Add user message and create an empty assistant message
     setChatHistory((prev) => [...prev, userMessage, { role: 'assistant', content: '', isMarkdown: false }]);
 
@@ -68,13 +238,25 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
     const signal = abortControllerRef.current.signal;
 
     try {
+      // Define the request body with a proper type
+      interface ChatRequestBody {
+        model: string;
+        messages: { role: string; content: string }[];
+        reasoner_prompt?: string;
+        responder_prompt?: string;
+      }
+
+      const requestBody: ChatRequestBody = {
+        model: selectedModel,
+        messages: [{ role: 'user', content: finalMessage }], // Use the final message with context
+        reasoner_prompt: reasonerPrompt,
+        responder_prompt: responderPrompt
+      };
+
       const res = await fetch(`${BACKEND_API}/api/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: selectedModel,
-          messages: [{ role: 'user', content: message }]
-        }),
+        body: JSON.stringify(requestBody),
         signal
       });
 
@@ -103,8 +285,55 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
             // Log actual structure of the event to help with debugging
             console.log("Event structure:", Object.keys(parsed));
 
+            // Handle UI terminal commands
+            if (parsed.type === 'ui_terminal_command' && onSshToolCall) {
+              const commandId = parsed.command_id;
+              const command = parsed.command;
+
+              console.log(`🖥️ UI Terminal Command: ${command} (ID: ${commandId})`);
+
+              // Add to debug panel
+              setDebugEvents(prev => [...prev, {
+                type: 'tool_call',
+                timestamp: new Date(),
+                content: `Tool: Terminal Command\nCommand ID: ${commandId}\nCommand: ${command}`
+              }]);
+
+              // Execute the command in the terminal and get output
+              const pendingPromise = onSshToolCall(command, commandId);
+
+              // Store the promise for later use
+              pendingTerminalCommandsRef.current.set(commandId, {
+                command,
+                pendingPromise
+              });
+
+              // When the promise resolves, log the output
+              pendingPromise.then(output => {
+                console.log(`🖥️ Terminal Output for Command ${commandId}: ${output.substring(0, 100)}...`);
+
+                // Add to debug panel
+                setDebugEvents(prev => [...prev, {
+                  type: 'tool_result',
+                  timestamp: new Date(),
+                  content: `Command ${commandId} Result:\n${output}`
+                }]);
+
+                // Clean up
+                pendingTerminalCommandsRef.current.delete(commandId);
+              }).catch(error => {
+                console.error(`Error executing terminal command ${commandId}:`, error);
+                setDebugEvents(prev => [...prev, {
+                  type: 'tool_result',
+                  timestamp: new Date(),
+                  content: `Command ${commandId} Error: ${error.message || String(error)}`
+                }]);
+                pendingTerminalCommandsRef.current.delete(commandId);
+              });
+            }
+
             // Handle standardized tool calls - add to debug panel and check for SSH commands
-            if (parsed.type === 'tool_call') {
+            else if (parsed.type === 'tool_call') {
               console.log("💥 TOOL CALL DETECTED:", parsed);
 
               // Extract tool name and input with proper fallbacks
@@ -121,16 +350,6 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
                 content: `Tool: ${toolName}\nDescription: ${toolDesc}\nInput: ${toolInput}`
               }]);
 
-              // Check if this is an SSH command tool call
-              if (toolName === 'run_command') {
-                if (onSshToolCall && typeof toolInput === 'string') {
-                  // Execute the command in the terminal
-                  onSshToolCall(toolInput);
-
-                } else {
-                  console.warn('SSH tool call received but onSshToolCall not provided or input is not a string');
-                }
-              }
             }
 
             // Handle standardized tool results - only add to debug panel
@@ -222,6 +441,13 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
       });
 
     } catch (error) {
+      // Check if this is an AbortError, which means we manually cancelled it
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        console.log('Request was aborted');
+        // We're cleaning up in handleClearChat, so no need to update chat history here
+        return;
+      }
+
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error('Streaming error:', errorMsg);
       setChatHistory((prev) => {
@@ -240,38 +466,57 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
       // Set streaming flag to false when complete
       setIsStreaming(false);
     }
-  };
+  }, [BACKEND_API, chatHistory.length, isFirstMessage, onSshToolCall, reasonerPrompt, responderPrompt, selectedModel]);
 
-  const handleModelDelete = async (model: string) => {
-    if (!model) return;
-    try {
-      const res = await fetch(`${BACKEND_API}/api/models/${model}`, { method: 'DELETE' });
-      const result = await res.json();
-      if (!res.ok || !result.success) throw new Error(result.error || 'Delete failed');
-      toast.success(`Model ${model} deleted`);
-      await fetchModels();
-    } catch (err) {
-      toast.error(`Failed to delete model: ${err instanceof Error ? err.message : String(err)}`);
+  // Handle clearing the chat and resetting the first message flag
+  const handleClearChat = useCallback(() => {
+    // Abort any ongoing requests first
+    if (abortControllerRef.current) {
+      console.log('Aborting ongoing request...');
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
-  };
 
-  const handleModelPull = async (model: string) => {
-    if (!model) throw new Error('No model specified');
-    try {
-      const res = await fetch(`${BACKEND_API}/api/models/pull`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model })
-      });
-      const result = await res.json();
-      if (!res.ok || !result.success) throw new Error(result.error || 'Pull failed');
-      toast.success(`Model ${model} pulled successfully`);
-      await fetchModels();
-    } catch (err) {
-      toast.error(`Failed to pull model: ${err instanceof Error ? err.message : String(err)}`);
-      throw err;
+    // Clear all pending terminal commands
+    const pendingCommands = pendingTerminalCommandsRef.current;
+    if (pendingCommands.size > 0) {
+      console.log(`Clearing ${pendingCommands.size} pending terminal commands`);
+      pendingCommands.clear();
     }
-  };
+
+    // Reset streaming flag
+    setIsStreaming(false);
+
+    // Clear the chat history and debug events
+    setChatHistory([]);
+    setDebugEvents([]);
+    currentAssistantIndexRef.current = -1; // Reset assistant index on chat clear
+    setIsFirstMessage(true); // Reset first message flag so the next message will include challenge/IP info
+
+    toast.info("Chat cleared and all operations stopped");
+  }, []);
+
+  // Handle prompt updates
+  const handleUpdateSystemPrompts = useCallback((newReasonerPrompt: string, newResponderPrompt: string) => {
+    setReasonerPrompt(newReasonerPrompt);
+    setResponderPrompt(newResponderPrompt);
+    toast.success("System prompts updated successfully");
+  }, []);
+
+  // Use memoized toggle debug function
+  const toggleDebugPanel = useCallback(() => {
+    setShowDebugPanel(prev => !prev);
+  }, []);
+
+  // Use memoized function for model selection
+  const handleModelSelect = useCallback((model: string) => {
+    setSelectedModel(model);
+  }, []);
+
+  // Use memoized function for debug events clearing
+  const handleClearDebugEvents = useCallback(() => {
+    setDebugEvents([]);
+  }, []);
 
   return (
     <div className="h-full bg-black flex flex-col max-h-screen">
@@ -281,18 +526,13 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
           models={models}
           chatHistory={chatHistory}
           onSendMessage={handleSendMessage}
-          onClearChat={() => {
-            setChatHistory([]);
-            setDebugEvents([]);
-            currentAssistantIndexRef.current = -1; // Reset assistant index on chat clear
-          }}
-          onModelSelect={setSelectedModel}
-          onModelDelete={handleModelDelete}
-          onModelPull={handleModelPull}
+          onClearChat={handleClearChat}  // Use our new clear handler
+          onModelSelect={handleModelSelect}
           selectedModel={selectedModel}
-          onToggleDebug={() => setShowDebugPanel(!showDebugPanel)}
+          onToggleDebug={toggleDebugPanel}
           showDebugPanel={showDebugPanel}
           isStreaming={isStreaming}
+          onUpdateSystemPrompts={handleUpdateSystemPrompts}
         />
       </div>
 
@@ -301,7 +541,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
         <div className="h-64 border-t border-gray-700 overflow-hidden flex-shrink-0">
           <DebugPanel
             events={debugEvents}
-            onClear={() => setDebugEvents([])}
+            onClear={handleClearDebugEvents}
           />
         </div>
       )}
