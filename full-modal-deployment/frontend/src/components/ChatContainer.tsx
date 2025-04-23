@@ -27,22 +27,91 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
     pendingPromise: Promise<string>;
   }>>(new Map());
 
+  // Add state for system prompts with default values
+  const [reasonerPrompt, setReasonerPrompt] = useState<string>(
+    `You are a multi-step problem solver. Always follow this pattern:
+
+1. Analyze the user request.
+2. Decide if a tool is needed (search or command).
+3. Use the tool and analyze the result.
+4. ONLY when you have everything you need and are fully prepared to give the final answer, conclude with the exact phrase: [Ready to answer]'
+
+IMPORTANT: 
+- Do NOT use the phrase [Ready to answer] anywhere in your thinking process except as the final signal.
+- Do NOT output the final answer here - only think through the steps.
+- Do NOT repeat the instructions or the [Ready to answer] phrase when outlining your approach.
+- If you need to use a tool, clearly indicate which tool you want to use and what input you're providing.
+- Avoid repeating tool actions indefinitely. If a tool result is unclear or incomplete after 3 tries, stop and respond.
+- If a command might run forever (like 'ping'), make sure it has a limit (e.g., 'ping -c 4').
+- For network scanning commands like nmap that can take a long time, consider adding the --min-rate parameter to speed up scanning.
+
+Hack The Box Challenges:
+- If the user asks to analyze, enumerate, or exploit a Hack The Box machine (e.g., "Start on Dancing at <target_ip>"):
+    - Use your own knowledge and the RAG tool to gather relevant context about the machine.
+    - Determine which recon or exploit commands would help investigate the machine based on its name, known ports, or CVEs.
+    - Use the 'run_command' tool to execute those commands automatically over SSH.
+    - You may run multiple useful commands in sequence without asking for confirmation.
+    - Always analyze each command's output before deciding what to do next.
+    - Keep safety in mind and avoid dangerous commands like \`rm\`, \`shutdown\`, \`:(){ :|: & };:\` or infinite loops.
+
+Begin your analysis now.
+`
+  );
+
+  const [responderPrompt, setResponderPrompt] = useState<string>(
+    `Now answer the user's question clearly and concisely based on previous analysis and tool results.`
+  );
+
   const fetchModels = async () => {
-    try {
-      const res = await fetch(`${BACKEND_API}/api/models`);
-      const data = await res.json();
-      if (data.models?.length) {
-        setModels(data.models);
-        if (!selectedModel || !data.models.some((m: Model) => m.model === selectedModel)) {
-          setSelectedModel(data.models[0].model);
-        }
-      } else {
-        setModels([]);
-        setSelectedModel('');
-      }
-    } catch (error) {
-      toast.error(`Failed to fetch models: ${error instanceof Error ? error.message : String(error)}`);
-    }
+      // Predefined models with display names and props
+      const predefinedModels: Model[] = [
+        {
+          model: "gpt-4.1",
+          displayName: "GPT-4.1",
+          reasonerPrompt: reasonerPrompt,
+          responderPrompt: responderPrompt
+        },
+        {
+          model: "gpt-4o",
+          displayName: "GPT-4o",
+          reasonerPrompt: reasonerPrompt,
+          responderPrompt: responderPrompt
+        },
+        {
+          model: "gpt-4o-mini",
+          displayName: "GPT-4o Mini",
+          reasonerPrompt: reasonerPrompt,
+          responderPrompt: responderPrompt
+        },
+        {
+          model: "gpt-3.5-turbo",
+          displayName: "GPT-3.5 Turbo",
+          reasonerPrompt: reasonerPrompt,
+          responderPrompt: responderPrompt
+        },
+        {
+          model: "o4",
+          displayName: "o4",
+          reasonerPrompt: reasonerPrompt,
+          responderPrompt: responderPrompt
+        },
+        {
+          model: "o4-mini",
+          displayName: "o4-mini",
+          reasonerPrompt: reasonerPrompt,
+          responderPrompt: responderPrompt
+        },
+        {
+          model: "o4-mini-high",
+          displayName: "o4-mini-high",
+          reasonerPrompt: reasonerPrompt,
+          responderPrompt: responderPrompt
+        },
+      ]
+
+      // Use predefined models if API returns empty
+      setModels(predefinedModels);
+      setSelectedModel('gpt-4o-mini');  // Default to a predefined model
   };
 
   useEffect(() => {
@@ -73,13 +142,32 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
     const signal = abortControllerRef.current.signal;
 
     try {
+      // Define the request body with a proper type
+      interface ChatRequestBody {
+        model: string;
+        messages: { role: string; content: string }[];
+        reasoner_prompt?: string;
+        responder_prompt?: string;
+      }
+
+      const requestBody: ChatRequestBody = {
+        model: selectedModel,
+        messages: [{ role: 'user', content: message }]
+      };
+
+      // Add system prompts if they exist
+      if (reasonerPrompt) {
+        requestBody.reasoner_prompt = reasonerPrompt;
+      }
+
+      if (responderPrompt) {
+        requestBody.responder_prompt = responderPrompt;
+      }
+
       const res = await fetch(`${BACKEND_API}/api/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: selectedModel,
-          messages: [{ role: 'user', content: message }]
-        }),
+        body: JSON.stringify(requestBody),
         signal
       });
 
@@ -315,6 +403,13 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
     }
   };
 
+  // Handle prompt updates
+  const handleUpdateSystemPrompts = (newReasonerPrompt: string, newResponderPrompt: string) => {
+    setReasonerPrompt(newReasonerPrompt);
+    setResponderPrompt(newResponderPrompt);
+    toast.success("System prompts updated successfully");
+  };
+
   return (
     <div className="h-full bg-black flex flex-col max-h-screen">
       {/* Main chat interface - now has a flex-grow but with min-height */}
@@ -335,6 +430,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ onSshToolCall }) =
           onToggleDebug={() => setShowDebugPanel(!showDebugPanel)}
           showDebugPanel={showDebugPanel}
           isStreaming={isStreaming}
+          onUpdateSystemPrompts={handleUpdateSystemPrompts}
         />
       </div>
 

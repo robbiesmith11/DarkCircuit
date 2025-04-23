@@ -12,4 +12,7 @@ export interface DebugEvent {
 
 export interface Model {
   model: string;
+  displayName?: string;
+  reasonerPrompt?: string;
+  responderPrompt?: string;
 }

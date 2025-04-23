@@ -110,11 +110,11 @@ class StreamingHandler(BaseCallbackHandler):
 
 
 class Darkcircuit_Agent:
-    def __init__(self):
+    def __init__(self, model_name="gpt-4o-mini", reasoning_prompt=None, response_prompt=None):
 
         api_key = os.environ["OPENAI_API_KEY"]
 
-        self.llm = ChatOpenAI(model="gpt-4o-mini", streaming=True, api_key=api_key)
+        self.llm = ChatOpenAI(model=model_name, streaming=True, api_key=api_key)
         self.streaming_handler = None
         self.terminal_output_queue = asyncio.Queue()
         self.terminal_command_id = 0
@@ -159,17 +159,17 @@ class Darkcircuit_Agent:
         self.tools = [self.search, self.run_command, self.rag_retrieve]
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
-        self.reasoning_prompt = SystemMessage(content="""You are a multi-step problem solver. Always follow this pattern:
+        DEFAULT_REASONING_PROMPT = """You are a multi-step problem solver. Always follow this pattern:
 
         1. Analyze the user request.
         2. Decide if a tool is needed (search or command).
         3. Use the tool and analyze the result.
-        4. ONLY when you have everything you need and are fully prepared to give the final answer, conclude with the exact phrase: 'Ready to answer.'
+        4. ONLY when you have everything you need and are fully prepared to give the final answer, conclude with the exact phrase: [Ready to answer]
 
         IMPORTANT: 
-        - Do NOT use the phrase 'Ready to answer' anywhere in your thinking process except as the final signal.
+        - Do NOT use the phrase [Ready to answer] anywhere in your thinking process except as the final signal.
         - Do NOT output the final answer here - only think through the steps.
-        - Do NOT repeat the instructions or the 'Ready to answer' phrase when outlining your approach.
+        - Do NOT repeat the instructions or the [Ready to answer] phrase when outlining your approach.
         - If you need to use a tool, clearly indicate which tool you want to use and what input you're providing.
         - Avoid repeating tool actions indefinitely. If a tool result is unclear or incomplete after 3 tries, stop and respond.
         - If a command might run forever (like 'ping'), make sure it has a limit (e.g., 'ping -c 4').
@@ -185,9 +185,12 @@ class Darkcircuit_Agent:
             - Keep safety in mind and avoid dangerous commands like `rm`, `shutdown`, `:(){ :|: & };:` or infinite loops.
 
         Begin your analysis now.
-        """)
-        self.response_prompt = SystemMessage(
-            content="Now answer the user's question clearly and concisely based on previous analysis and tool results.")
+        """
+
+        DEFAULT_RESPONSE_PROMPT = "Now answer the user's question clearly and concisely based on previous analysis and tool results."
+
+        self.reasoning_prompt = SystemMessage(content=reasoning_prompt or DEFAULT_REASONING_PROMPT)
+        self.response_prompt = SystemMessage(content=response_prompt or DEFAULT_RESPONSE_PROMPT)
 
         builder = StateGraph(MessagesState)
         builder.add_node("reasoner", self.reasoner)
@@ -356,7 +359,7 @@ class Darkcircuit_Agent:
             print(f"[Agent] Reasoner result preview: {result_text[:100]}...")
 
             # Determine if we're done based on the magic phrase
-            done = "ready to answer" in result_text
+            done = "[Ready to answer]" in result_text
             print(f"[Agent] Done status: {done}")
 
             # Flush the thinking buffer to send consolidated thinking content

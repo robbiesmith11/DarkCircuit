@@ -6,6 +6,7 @@ import { ToastContainer, toast } from 'react-toastify';
 import SSHConnectForm from './components/SSHConnectForm';
 import XTerminal from './components/XTerminal';
 import 'react-toastify/dist/ReactToastify.css';
+import appLogo from '../src/components/DarkCircuit_Logo_Blue_PNG.png';
 
 const TERMINAL_WS_URL = import.meta.env.VITE_TERMINAL_WS_URL || '';
 const API_BASE_URL = import.meta.env.VITE_BACKEND_API_URL || '';
@@ -207,6 +208,12 @@ function App() {
         onServiceToggle={handleServiceToggle}
       />
       <div className="flex-1 p-4 overflow-auto">
+        {/* Background logo */}
+        <img
+          src={appLogo}
+          alt="Dark Circuit Logo Background"
+          className="absolute top-1/2 left-1/2 w-[80%] max-w-4xl opacity-15 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-0"
+        />
         <div className="grid grid-cols-2 gap-4 h-full">
           <div className="space-y-4 h-full">
             {/* Pass the SSH command handler to ChatContainer */}

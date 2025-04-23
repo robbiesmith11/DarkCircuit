@@ -103,9 +103,9 @@ class App:
         class ChatRequest(BaseModel):
             model: str
             messages: List[ChatMessage]
+            reasoner_prompt: Optional[str] = None
+            responder_prompt: Optional[str] = None
 
-        class ModelPullRequest(BaseModel):
-            model: str
 
         class TerminalOutput(BaseModel):
             command_id: int
@@ -141,29 +141,6 @@ class App:
             self._close_ssh_connection()
             return {"success": True, "message": "SSH connection closed"}
 
-        @self.fastapi_app.get("/api/models")
-        async def get_models():
-            """Get available models from Ollama"""
-            models = self.ollama_server.tags.remote()
-            return {"models": models}
-
-        @self.fastapi_app.post("/api/models/pull")
-        async def pull_model(req: ModelPullRequest):
-            """Pull a new model onto the Ollama server."""
-            try:
-                result = self.ollama_server.pull.remote(req.model)
-                return {"success": True, "message": f"Model '{req.model}' pulled successfully."}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-
-        @self.fastapi_app.delete("/api/models/{model_name}")
-        async def delete_model(model_name: str):
-            """Delete a model from the Ollama server."""
-            try:
-                result = self.ollama_server.delete.remote(model_name)
-                return {"success": True, "message": f"Model '{model_name}' deleted successfully."}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
 
         @self.fastapi_app.post("/api/terminal/output")
         async def submit_terminal_output(output_data: TerminalOutput):
@@ -190,14 +167,12 @@ class App:
             # Convert to format expected by Ollama
             prompt = request.messages[-1].content  # Take the latest user message as prompt
 
-            # Load connection parameters from the volume
-            with open("/ssh_data/connection_params.json", "r") as f:
-                conn_params = json.load(f)
-
-            print(f"main app: {conn_params}")
-
             # Run the LangGraph agent with the custom chat model
-            agent = Darkcircuit_Agent()
+            agent = Darkcircuit_Agent(
+                model_name=request.model,
+                reasoning_prompt=request.reasoner_prompt,
+                response_prompt=request.responder_prompt
+            )
 
             # Store the agent for later reference (e.g., to receive terminal output)
             agent_id = f"agent_{int(time.time())}"
