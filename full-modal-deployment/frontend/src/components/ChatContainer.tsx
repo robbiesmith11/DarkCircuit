@@ -52,8 +52,10 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
   const [reasonerPrompt, setReasonerPrompt] = useState<string>("");
   const [responderPrompt, setResponderPrompt] = useState<string>("");
 
-  // Modified to accept prompts as parameters
+  // Modified to accept prompts as parameters and update all model prompts
   const createModels = useCallback((reasonerPrompt: string, responderPrompt: string) => {
+    console.log("Creating models with prompts:", { reasonerPrompt, responderPrompt });
+
     const predefinedModels: Model[] = [
       {
         model: "gpt-4.1",
@@ -101,8 +103,12 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 
     // Use predefined models if API returns empty
     setModels(predefinedModels);
-    setSelectedModel('gpt-4o-mini');  // Default to a predefined model
-  }, []);
+
+    // Only set default model if not already set
+    if (!selectedModel) {
+      setSelectedModel('gpt-4o-mini');
+    }
+  }, [selectedModel]);
 
   useEffect(() => {
     const initialize = async () => {
@@ -147,50 +153,50 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
   }, [createModels]);
 
   const handleSendMessage = useCallback(async (message: string) => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
 
-      // Reset debug events for new conversation
-      setDebugEvents([]);
+    // Reset debug events for new conversation
+    setDebugEvents([]);
 
-      // Modify message for first message in conversation - log current values from refs for debugging
-      let finalMessage = message;
-      if (isFirstMessage) {
-        console.log("First message handling - Current values:", {
-          selectedChallenge: selectedChallengeRef.current,
-          targetIp: targetIpRef.current
-        });
+    // Modify message for first message in conversation - log current values from refs for debugging
+    let finalMessage = message;
+    if (isFirstMessage) {
+      console.log("First message handling - Current values:", {
+        selectedChallenge: selectedChallengeRef.current,
+        targetIp: targetIpRef.current
+      });
 
-        // Explicitly check if either value has content (not just if the ref exists)
-        const hasChallenge = selectedChallengeRef.current && selectedChallengeRef.current.trim() !== '';
-        const hasTargetIp = targetIpRef.current && targetIpRef.current.trim() !== '';
+      // Explicitly check if either value has content (not just if the ref exists)
+      const hasChallenge = selectedChallengeRef.current && selectedChallengeRef.current.trim() !== '';
+      const hasTargetIp = targetIpRef.current && targetIpRef.current.trim() !== '';
 
-        if (hasChallenge || hasTargetIp) {
-          let suffix = '\n\n'; // Start with line breaks after the original message
+      if (hasChallenge || hasTargetIp) {
+        let suffix = '\n\n'; // Start with line breaks after the original message
 
-          if (hasChallenge) {
-            suffix += `HackTheBox challenge: ${selectedChallengeRef.current}\n`;
-          }
-
-          if (hasTargetIp) {
-            suffix += `Target IP: ${targetIpRef.current}\n`;
-          }
-
-          if (suffix !== '\n\n') {
-            finalMessage = finalMessage + suffix;
-            // Log the modified message to debug
-            setDebugEvents(prev => [...prev, {
-              type: 'thinking',
-              timestamp: new Date(),
-              content: `Modified first message with target info: ${finalMessage}`
-            }]);
-          }
+        if (hasChallenge) {
+          suffix += `HackTheBox challenge: ${selectedChallengeRef.current}\n`;
         }
 
-        // No longer the first message after sending
-        setIsFirstMessage(false);
+        if (hasTargetIp) {
+          suffix += `Target IP: ${targetIpRef.current}\n`;
+        }
+
+        if (suffix !== '\n\n') {
+          finalMessage = finalMessage + suffix;
+          // Log the modified message to debug
+          setDebugEvents(prev => [...prev, {
+            type: 'thinking',
+            timestamp: new Date(),
+            content: `Modified first message with target info: ${finalMessage}`
+          }]);
+        }
       }
+
+      // No longer the first message after sending
+      setIsFirstMessage(false);
+    }
 
     // Prepend chat history to give context to the agent
     // but only if we have previous messages
@@ -246,12 +252,21 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
         responder_prompt?: string;
       }
 
+      // Find the current model to get its prompts
+      const currentModel = models.find(m => m.model === selectedModel);
+
       const requestBody: ChatRequestBody = {
         model: selectedModel,
         messages: [{ role: 'user', content: finalMessage }], // Use the final message with context
-        reasoner_prompt: reasonerPrompt,
-        responder_prompt: responderPrompt
+        reasoner_prompt: currentModel?.reasonerPrompt || reasonerPrompt,
+        responder_prompt: currentModel?.responderPrompt || responderPrompt
       };
+
+      console.log("Sending request with prompts:", {
+        model: selectedModel,
+        reasoner_prompt: requestBody.reasoner_prompt?.substring(0, 50) + "...",
+        responder_prompt: requestBody.responder_prompt?.substring(0, 50) + "..."
+      });
 
       const res = await fetch(`${BACKEND_API}/api/chat/completions`, {
         method: 'POST',
@@ -466,7 +481,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
       // Set streaming flag to false when complete
       setIsStreaming(false);
     }
-  }, [BACKEND_API, chatHistory.length, isFirstMessage, onSshToolCall, reasonerPrompt, responderPrompt, selectedModel]);
+  }, [BACKEND_API, chatHistory.length, isFirstMessage, models, onSshToolCall, reasonerPrompt, responderPrompt, selectedModel]);
 
   // Handle clearing the chat and resetting the first message flag
   const handleClearChat = useCallback(() => {
@@ -496,12 +511,28 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     toast.info("Chat cleared and all operations stopped");
   }, []);
 
-  // Handle prompt updates
+  // Handle prompt updates - FIXED to update the model prompts too
   const handleUpdateSystemPrompts = useCallback((newReasonerPrompt: string, newResponderPrompt: string) => {
+    console.log("System prompts updated:", {
+      reasoner: newReasonerPrompt.substring(0, 50) + "...",
+      responder: newResponderPrompt.substring(0, 50) + "..."
+    });
+
+    // Update the base prompts
     setReasonerPrompt(newReasonerPrompt);
     setResponderPrompt(newResponderPrompt);
+
+    // Update all models with new prompts
+    const updatedModels = models.map(model => ({
+      ...model,
+      reasonerPrompt: newReasonerPrompt,
+      responderPrompt: newResponderPrompt
+    }));
+
+    setModels(updatedModels);
+
     toast.success("System prompts updated successfully");
-  }, []);
+  }, [models]);
 
   // Use memoized toggle debug function
   const toggleDebugPanel = useCallback(() => {
@@ -510,6 +541,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 
   // Use memoized function for model selection
   const handleModelSelect = useCallback((model: string) => {
+    console.log("Selected model:", model);
     setSelectedModel(model);
   }, []);
 
@@ -526,7 +558,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
           models={models}
           chatHistory={chatHistory}
           onSendMessage={handleSendMessage}
-          onClearChat={handleClearChat}  // Use our new clear handler
+          onClearChat={handleClearChat}
           onModelSelect={handleModelSelect}
           selectedModel={selectedModel}
           onToggleDebug={toggleDebugPanel}

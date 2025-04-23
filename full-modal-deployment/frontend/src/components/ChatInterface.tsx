@@ -76,6 +76,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   const handleUpdateSystemPrompts = () => {
+    console.log("Updating system prompts with:", {
+      reasonerPrompt,
+      responderPrompt
+    });
+
     if (onUpdateSystemPrompts) {
       onUpdateSystemPrompts(reasonerPrompt, responderPrompt);
     }
@@ -83,6 +88,24 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     // Close the modal
     setIsModalOpen(false);
   };
+
+// Modify the useEffect for populating prompts from the selected model
+useEffect(() => {
+  if (isModalOpen) {
+    // Find the currently selected model
+    const currentModel = models.find(m => m.model === selectedModel);
+    console.log("Populating prompts from current model:", currentModel);
+
+    // If we have prompts from the current model, use those
+    if (currentModel?.reasonerPrompt) {
+      setReasonerPrompt(currentModel.reasonerPrompt);
+    }
+
+    if (currentModel?.responderPrompt) {
+      setResponderPrompt(currentModel.responderPrompt);
+    }
+  }
+}, [isModalOpen, models, selectedModel]);
 
   // Handle local clear chat with scroll reset
   const handleClearChat = () => {
