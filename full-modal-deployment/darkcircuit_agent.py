@@ -193,11 +193,11 @@ class Darkcircuit_Agent:
 
         while True:
             # Check timeouts
-            if time.time() - session_start_time > 300:  # 5 minute absolute timeout
+            '''if time.time() - session_start_time > 300:  # 5 minute absolute timeout
                 return f"Command timed out after 5 minutes. Last output:\n\n{last_output}"
 
             if seen_partial and time.time() - last_output_time > 60:  # 1 minute without updates
-                return f"Command appears to have stalled. Last output:\n\n{last_output}"
+                return f"Command appears to have stalled. Last output:\n\n{last_output}"'''
 
             # Check if result exists in the shared dict
             if command_id_str in command_results:

@@ -106,7 +106,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 
     // Only set default model if not already set
     if (!selectedModel) {
-      setSelectedModel('gpt-4o-mini');
+      setSelectedModel('o4-mini');
     }
   }, [selectedModel]);
 

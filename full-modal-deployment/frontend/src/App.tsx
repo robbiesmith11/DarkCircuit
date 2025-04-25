@@ -118,18 +118,6 @@ function App() {
 
           // Execute the command in the terminal, passing the command ID
           executeCommandRef.current!(command, commandId);
-
-          // Set a timeout to resolve the promise after some time if not resolved
-          setTimeout(() => {
-            // Check if this command is still pending
-            if (pendingCommandsRef.current.has(commandId)) {
-              const pendingCommand = pendingCommandsRef.current.get(commandId);
-              if (pendingCommand) {
-                pendingCommand.resolve(`Command timed out after 60 seconds. Check terminal for results.`);
-                pendingCommandsRef.current.delete(commandId);
-              }
-            }
-          }, 60000); // 60 seconds timeout
         });
       } else {
         // For commands without an ID, just execute without waiting for output

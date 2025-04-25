@@ -198,16 +198,16 @@ export const XTerminal: React.FC<XTerminalProps> = ({
       if (!cmd) return;
 
       // Check for timeout first
-      const elapsed = Date.now() - startTime;
-      if (elapsed > maxLifetime) {
-        onTerminalOutput?.(commandId, commandOutputBuffer + "\n\n[Command timed out after 2 minutes]", false);
+      //const elapsed = Date.now() - startTime;
+      //if (elapsed > maxLifetime) {
+        //onTerminalOutput?.(commandId, commandOutputBuffer + "\n\n[Command timed out after 2 minutes]", false);
         // Type-safe clearTimeout - only call if not null
-        if (cmd.updateTimeout) {
-          clearTimeout(cmd.updateTimeout);
-        }
-        activeCommandsRef.current.delete(commandId);
-        return;
-      }
+        //if (cmd.updateTimeout) {
+          //clearTimeout(cmd.updateTimeout);
+        //}
+        //activeCommandsRef.current.delete(commandId);
+        //return;
+      //}
 
       // Process any new output
       const latestOutput = outputBufferRef.current;
