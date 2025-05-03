@@ -43,7 +43,6 @@
   flex-grow: 1;
   overflow-y: auto;
   padding: 10px;
-  max-height: calc(100vh - 80px); 
 }
 
 .chat-input {
@@ -112,9 +111,26 @@
 }
 
 .chat-container {
-  max-height: 500px; /* Adjust this value to fit your design */
-  overflow-y: auto;  /* Enables scrolling if content exceeds max height */
+  max-height: 580px; 
+  overflow-y: auto;  
 }
+
+/* Debug Panel Media Queries */
+.debug-panel {
+  height: 16rem; /* Default height (h-64) */
+}
+
+@media (min-width: 1920px) and (min-height: 1080px) {
+  .chat-container {
+    max-height: 630px;
+  }
+
+  .debug-panel {
+    height: 20rem;
+  }
+
+}
+
 
 /* Base markdown content styling */
 .markdown-content {

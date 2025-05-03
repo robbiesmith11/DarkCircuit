@@ -570,7 +570,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 
       {/* Debug panel - fixed height with scrolling */}
       {showDebugPanel && (
-        <div className="h-64 border-t border-gray-700 overflow-hidden flex-shrink-0">
+        <div className="debug-panel border-t border-gray-700 overflow-hidden flex-shrink-0">
           <DebugPanel
             events={debugEvents}
             onClear={handleClearDebugEvents}

@@ -319,7 +319,7 @@ useEffect(() => {
                     </div>
                   ) : (
                     // Use the same whitespace handling as the debug panel
-                    <div className="text-white whitespace-pre-wrap">
+                    <div className="text-white whitespace-pre-wrap break-words">
                       {msg.content}
                     </div>
                   )}
