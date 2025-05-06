@@ -1,6 +1,11 @@
 import modal
+import uuid
+from typing import Optional, List, Dict, Any
 
 MINUTES = 60  # seconds
+
+trace_buffer = modal.Dict.from_name("trace-buffer", create_if_missing=True)
+command_meta = modal.Dict.from_name("command-meta", create_if_missing=True)
 
 app_image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -18,6 +23,7 @@ with app_image.imports():
     import json
     import time
     import modal
+    import datetime
     from typing import Optional, List, Dict, Any
     from pydantic import BaseModel
     from fastapi import FastAPI, Request, WebSocket
@@ -37,6 +43,8 @@ with app_image.imports():
 
 
 app = modal.App("DarkCircuit")
+
+
 
 ssh_volume = modal.Volume.from_name("ssh_data", create_if_missing=True)
 command_results = modal.Dict.from_name("terminal-command-results", create_if_missing=True)
@@ -156,6 +164,22 @@ class App:
             }
             print(f"Stored output for command {command_id} in shared dict")
 
+            key = str(command_id)
+            try:
+                meta = command_meta[key]
+                del command_meta[key]
+            except KeyError:
+                meta = {"command": "<unknown>", "trace_id": "trace-missing", "step_idx": -1}
+
+            record = {
+                "trace_id": meta["trace_id"],
+                "step_idx": meta["step_idx"],
+                "timestamp": time.time(),
+                "command": meta["command"],
+                "output": output,
+                "exit_code": 0,
+            }
+            trace_buffer[str(uuid.uuid4())] = record
             return {"success": True}
 
         # REST API endpoint for chat completions with streaming
@@ -183,8 +207,6 @@ class App:
                 try:
                     async for event in agent.run_agent_streaming(prompt):
                         event_type = event.get("type", "unknown")
-
-                        # For token events (chat content)
                         if event_type == "token":
                             token = event.get("value", "")
                             data = {
@@ -201,19 +223,16 @@ class App:
                                 ]
                             }
                             yield f"data: {json.dumps(data)}\n\n"
-
-                        # For thinking, tool_call, and tool_result events
-                        elif event_type in ["thinking", "tool_call", "tool_result"]:
-                            # Forward these events directly for the debug panel
+                        elif event_type in {"thinking", "tool_call", "tool_result"}:
                             yield f"data: {json.dumps(event)}\n\n"
-
-                        # For UI terminal command events
                         elif event_type == "ui_terminal_command":
-                            # Forward the command to the UI for execution
-                            # This special event type will be handled by the frontend
+                            cid = event["command_id"]
+                            command_meta[str(cid)] = {
+                                "command": event["command"],
+                                "trace_id": event["trace_id"],
+                                "step_idx": cid,
+                            }
                             yield f"data: {json.dumps(event)}\n\n"
-
-                    # Final stop chunk
                     data = {
                         "id": f"chatcmpl-{int(time.time())}",
                         "object": "chat.completion.chunk",
@@ -230,9 +249,7 @@ class App:
                     yield f"data: {json.dumps(data)}\n\n"
                     yield "data: [DONE]\n\n"
                 finally:
-                    # Clean up the agent after the conversation is complete
-                    if agent_id in self.active_agents:
-                        del self.active_agents[agent_id]
+                    self.active_agents.pop(agent_id, None)
 
             return StreamingResponse(
                 generate_stream(),

@@ -1,4 +1,5 @@
 import os
+import uuid
 import asyncio
 import json
 from langchain_openai import ChatOpenAI
@@ -110,6 +111,8 @@ class StreamingHandler(BaseCallbackHandler):
 
 class Darkcircuit_Agent:
     def __init__(self, model_name="gpt-4o-mini", reasoning_prompt=None, response_prompt=None):
+        self.trace_id = f"trace_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+        self.command_meta = {}
 
         api_key = os.environ["OPENAI_API_KEY"]
 
@@ -139,12 +142,14 @@ class Darkcircuit_Agent:
                 # Generate a unique ID for this command execution
                 self.terminal_command_id += 1
                 command_id = self.terminal_command_id
+                self.command_meta[command_id] = dict(cmd=command, step_idx=command_id)
 
                 # Tell the frontend to execute the command
                 await self.streaming_handler.queue.put({
                     "type": "ui_terminal_command",
                     "command": command,
-                    "command_id": command_id
+                    "command_id": command_id,
+                    "trace_id": self.trace_id
                 })
 
                 # Wait for output using the file-based approach

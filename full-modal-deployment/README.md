@@ -47,9 +47,11 @@ cd frontend && npm install && cd ..
 2. Insert name where it is indicated on each line in the command below:
 ```bash
 echo 'VITE_BACKEND_API_URL=https://<replace-with-workspace-name>--darkcircuit-app-serve.modal.run' > frontend/.env
+
 ```
 ```bash
 echo 'VITE_TERMINAL_WS_URL=wss://<replace-with-workspace-name>--darkcircuit-app-serve.modal.run' >> frontend/.env
+
 ```
 
 ### Step 5: Create OpenAI API Secret on Modal
