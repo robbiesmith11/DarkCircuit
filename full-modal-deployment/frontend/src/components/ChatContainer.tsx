@@ -308,11 +308,11 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
               console.log(`🖥️ UI Terminal Command: ${command} (ID: ${commandId})`);
 
               // Add to debug panel
-              setDebugEvents(prev => [...prev, {
-                type: 'tool_call',
-                timestamp: new Date(),
-                content: `Tool: Terminal Command\nCommand ID: ${commandId}\nCommand: ${command}`
-              }]);
+              //setDebugEvents(prev => [...prev, {
+              //  type: 'tool_call',
+              //  timestamp: new Date(),
+              //  content: `Tool: Terminal Command\nCommand ID: ${commandId}\nCommand: ${command}`
+              //}]);
 
               // Execute the command in the terminal and get output
               const pendingPromise = onSshToolCall(command, commandId);
@@ -328,11 +328,11 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
                 console.log(`🖥️ Terminal Output for Command ${commandId}: ${output.substring(0, 100)}...`);
 
                 // Add to debug panel
-                setDebugEvents(prev => [...prev, {
-                  type: 'tool_result',
-                  timestamp: new Date(),
-                  content: `Command ${commandId} Result:\n${output}`
-                }]);
+                // setDebugEvents(prev => [...prev, {
+                //  type: 'tool_result',
+                //  timestamp: new Date(),
+                //  content: `Command ${commandId} Result:\n${output}`
+                // }]);
 
                 // Clean up
                 pendingTerminalCommandsRef.current.delete(commandId);

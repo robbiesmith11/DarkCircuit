@@ -15,6 +15,7 @@ with app_image.imports():
     import asyncio
     import paramiko
     import os
+    import re
     import json
     import time
     import modal
@@ -265,6 +266,7 @@ class App:
                         await websocket.close()
                         return
 
+                    transport.set_keepalive(30)  # 30s transport-layer keepalives
                     self.ssh_state["channel"] = channel = transport.open_session()
                 except Exception as e:
                     self.ssh_state["connected"] = False
@@ -305,6 +307,7 @@ class App:
                                         # Decode with error handling
                                         try:
                                             decoded_data = data.decode('utf-8', errors='replace')
+                                            # cleaned_data = self._strip_ansi_codes(decoded_data)
                                             self.terminal_output_buffers[connection_id] += decoded_data
 
                                             # Limit buffer size to prevent memory issues
@@ -319,16 +322,6 @@ class App:
                                 # Short sleep to prevent CPU spinning
                                 await asyncio.sleep(0.05)
 
-                                # Check if channel is still open but not sending data
-                                if not channel.exit_status_ready() and not channel.recv_ready():
-                                    try:
-                                        # Try sending a null byte to keep the connection alive
-                                        # This acts like a keepalive packet
-                                        if time.time() % 30 < 0.1:  # Approximately every 30 seconds
-                                            channel.send('\0')
-                                    except:
-                                        # If we can't send, channel is likely dead
-                                        break
                     except Exception as e:
                         print(f"Error in ssh_to_ws: {e}")
                         self.ssh_state["error"] = str(e)
@@ -385,12 +378,6 @@ class App:
                                 else:
                                     continue
 
-                                # Handle special terminal commands
-                                if data == b'\x03':  # Ctrl+C
-                                    channel.send(data)
-                                elif isinstance(data, bytes) and data.startswith(b'\x1b['):  # Terminal escape sequences
-                                    channel.send(data)
-
                             except asyncio.TimeoutError:
                                 # Just a timeout, loop and try again if we're still supposed to be running
                                 if not self.ssh_state["running"] or channel.exit_status_ready():
@@ -441,6 +428,20 @@ class App:
                     await websocket.close()
                 except:
                     pass
+
+    def _strip_ansi_codes(self, text: any):
+        """
+        Strip ANSI escape sequences from a string
+
+        Args:
+            text (any): The text containing ANSI escape codes
+
+        Returns:
+            str: Clean text without ANSI codes
+        """
+        # This regex matches all ANSI escape sequences
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        return ansi_escape.sub('', text) if isinstance(text, str) else text
 
     def _setup_ssh_connection(self, host: str, port: int, username: str, password: Optional[str] = None,
                              key_path: Optional[str] = None) -> Dict[str, Any]:

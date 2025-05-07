@@ -4,6 +4,7 @@ import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
 import 'xterm/css/xterm.css';
+import stripAnsi from 'strip-ansi';
 
 interface XTerminalProps {
   webSocketUrl: string;
@@ -183,14 +184,14 @@ export const XTerminal: React.FC<XTerminalProps> = ({
 
     // Configure timing parameters - use more frequent updates for all commands
     const pollingInterval = isLongRunning ? 1500 : 2500; // Poll more frequently for long-running commands
-    const maxLifetime = 120000; // 2 minutes maximum runtime
+    //const maxLifetime = 120000; // 2 minutes maximum runtime
 
     // Track state
     let lastOutputLength = 0;
     const startTime = Date.now();
 
     // Improved shell prompt pattern with more variants
-    const shellPromptPattern = /(\$ |# |> |sh-[0-9]+\.[0-9]+\$ |bash-[0-9]+\.[0-9]+\$ |\n[^\n]+[$#>]\s*$)/;
+    const shellPromptPattern = /(\$ |# |> |login: |Password: |sh-[0-9]+\.[0-9]+\$ |bash-[0-9]+\.[0-9]+\$ |\n[^\n]+[$#>]\s*$)/;
 
     // Unified function to process output
     const processOutput = () => {
@@ -237,7 +238,7 @@ export const XTerminal: React.FC<XTerminalProps> = ({
 
       // Clean up if complete
       if (isComplete) {
-        console.log(`Command ${commandId} completed after ${Math.round(elapsed/1000)}s`);
+        //console.log(`Command ${commandId} completed after ${Math.round(elapsed/1000)}s`);
         // Type-safe clearTimeout
         if (cmd.updateTimeout) {
           clearTimeout(cmd.updateTimeout);
@@ -298,6 +299,9 @@ export const XTerminal: React.FC<XTerminalProps> = ({
       if (outputStr.startsWith('__OUTPUT__')) {
         return;
       }
+
+      // remove all ANSI escapes
+      outputStr = stripAnsi(outputStr);
 
       // Accumulate output
       outputBufferRef.current += outputStr;
