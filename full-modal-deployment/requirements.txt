@@ -4,5 +4,7 @@ websockets
 langchain_openai
 langchain_community
 langgraph
+duckduckgo-search==7.5.5
 langchain_core
 ollama
+uvicorn
