@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request, WebSocket
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import uvicorn
+from uvicorn import Config, Server
 import sys
 
 from langchain_core.runnables import Runnable
@@ -220,7 +220,7 @@ def _close_ssh_connection():
     ssh_state["error"] = None
 
 
-async def run_ssh_command(command: str, timeout: int = 30) -> Dict[str, Any]:
+async def run_ssh_command(command: str, timeout: int = 1200) -> Dict[str, Any]:
     global terminal_ws_clients, terminal_output_buffers
 
     if not terminal_ws_clients:
@@ -231,27 +231,89 @@ async def run_ssh_command(command: str, timeout: int = 30) -> Dict[str, Any]:
     async with command_lock:
         # Clear buffer and send the command
         terminal_output_buffers["main"] = ""
-        await websocket.send_text(command)
+        # Add a marker to identify agent commands
+        marked_command = f"__AGENT_COMMAND__:{command}\n"
+        await websocket.send_text(marked_command)
 
         start = time.time()
-        buf = ""
+        last_output = ""
+        output_stable_count = 0
+
         while time.time() - start < timeout:
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)
             raw = terminal_output_buffers["main"]
-            # If the unique ready marker appears, extract and return clean output
+
+            # Primary detection: Our ready marker for bash
             if PROMPT_READY_MARKER in raw:
-                print(f"Prompt:{raw}")
+                print(f"Prompt detected via marker: {raw}")
                 # Remove marker and strip ANSI
                 cleaned = _strip_ansi_codes(raw.replace(PROMPT_READY_MARKER, ""))
-                # Drop the echoed command itself
-                # (optional: remove first line if it's the command echo)
-                lines = cleaned.splitlines()
-                if lines and lines[0].strip() == command:
-                    lines = lines[1:]
-                output = "\n".join(lines).strip()
-                # Additional processing to fix the extra line issue
-                output = output.replace("\n\n└──╼ [★]$", "\n└──╼ [★]$")
-                return {"success": True, "output": output, "error": "", "exit_code": 0}
+
+                command_with_output = f"{command}\r\n"
+                if command_with_output in cleaned:
+                    cleaned = cleaned[cleaned.find(command_with_output) + len(command_with_output):]
+
+                # Ensure the output ends with a newline to prevent prompt collision
+                if cleaned and not cleaned.endswith("\n"):
+                    cleaned += "\n"
+
+                print(f"Cleaned: {cleaned}")
+                return {"success": True, "output": cleaned, "error": "", "exit_code": 0}
+
+            # Secondary detection: Check for CLI prompt patterns if output has stabilized
+            if raw == last_output:
+                output_stable_count += 1
+                # If output hasn't changed for ~1 second (10 * 0.1s), check for CLI prompts
+                if output_stable_count >= 50:
+                    cleaned = _strip_ansi_codes(raw)
+
+                    # Look for CLI prompt patterns at the end of the output
+                    cli_patterns = [
+                        # Shell prompts
+                        r'smb: \\[^\\]*> $',  # SMB client
+                        r'ftp> $',  # FTP client
+                        r'mysql> $',  # MySQL client
+                        r'sqlite> $',  # SQLite client
+                        r'irb\([^)]*\)> $',  # Interactive Ruby
+                        r'>>> $',  # Python REPL
+                        r'\$ $',  # Bash prompt
+                        r'# $',  # Root prompt
+                        r'> $',  # Generic prompt
+
+                        # Security tools & debuggers
+                        r'msf.*?> $',  # Metasploit Framework
+                        r'\(gdb\) $',  # GDB debugger
+                        r'\[0x[0-9a-f]+\]> $',  # Radare2
+                        r'sqlmap.*?> $',  # SQLMap interactive
+                        r'bettercap.*?> $',  # Bettercap
+
+                        # Authentication prompts
+                        r'[Ll]ogin: $',  # Login prompt
+                        r'[Pp]assword: $',  # Password prompt
+                        r'[Uu]sername: $',  # Username prompt
+                        r'[Pp]assphrase.*?: $',  # Passphrase prompt
+
+                        # Other interactive interfaces
+                        r'Command> $',  # Generic command prompt
+                        r'[Ss]hell> $',  # Generic shell prompt
+                        r'postgres=# $',  # PostgreSQL
+                        r'.*?=# $',  # Database CLI
+                        r'.*?=> $',  # Alternative database prompt
+                    ]
+
+                    # Get the last line of output (where prompt likely is)
+                    lines = cleaned.splitlines()
+                    if lines:
+                        last_line = lines[-1]
+
+                        for pattern in cli_patterns:
+                            if re.search(pattern, last_line):
+                                print(f"Detected interactive CLI prompt: {pattern} in line: {last_line}")
+                                return {"success": True, "output": cleaned, "error": "", "exit_code": 0}
+            else:
+                # Reset the counter when output changes
+                output_stable_count = 0
+                last_output = raw
 
         # Timeout: return whatever we have
         final = _strip_ansi_codes(terminal_output_buffers["main"])
@@ -521,17 +583,31 @@ async def terminal_endpoint(websocket: WebSocket):
         terminal_ws_clients.discard(websocket)
 
 
-# Determine base path for static files
-if getattr(sys, 'frozen', False):
-    # Running in a PyInstaller bundle
-    base_path = os.path.join(sys._MEIPASS, "frontend", "dist")
-else:
-    # Running in dev mode
-    base_path = os.path.abspath("frontend/dist")
+def get_static_path():
+    if getattr(sys, 'frozen', False):
+        base_path = sys._MEIPASS  # PyInstaller onedir or onefile
+    else:
+        base_path = os.path.dirname(__file__)  # local dev
 
-print(f"Serving static files from: {base_path}")
-app.mount("/", StaticFiles(directory=base_path, html=True), name="frontend")
+    return os.path.join(base_path, "frontend", "dist")
+
+static_path = get_static_path()
+
+if not os.path.isdir(static_path):
+    raise RuntimeError(f"❌ Static path not found: {static_path}")
+
+app.mount("/", StaticFiles(directory=static_path, html=True), name="frontend")
+
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+
+    async def run_uvicorn():
+        config = Config(app=app, host="127.0.0.1", port=8000, loop="asyncio", lifespan="on")
+        server = Server(config)
+        await server.serve()
+
+    try:
+        asyncio.run(run_uvicorn())
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print("🛑 Backend server shutdown cleanly.")

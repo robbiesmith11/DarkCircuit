@@ -110,8 +110,8 @@ class Darkcircuit_Agent:
                         output = result.get("output", "")
 
                         # If there was an optimization, prepend that information
-                        if optimization_message:
-                            output = f"Note: {optimization_message}\n\n{output}"
+                        # if optimization_message:
+                        #    output = f"Note: {optimization_message}\n\n{output}"
 
                         return output
                     else:

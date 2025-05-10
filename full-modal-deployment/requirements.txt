@@ -6,5 +6,8 @@ langchain_community
 langgraph
 duckduckgo-search==7.5.5
 langchain_core
-ollama
 uvicorn
+pypdf
+langchain_text_splitters
+fastembed>=0.1.0
+faiss-cpu

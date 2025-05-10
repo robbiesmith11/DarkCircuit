@@ -61,7 +61,7 @@ Remember to be ethical and professional in your guidance. Focus on education and
         return None, None
 
 
-async def wait_for_terminal_output(queue, command_id, timeout=60):
+async def wait_for_terminal_output(queue, command_id, timeout=1200):
     """
     Wait for terminal output from the frontend.
     

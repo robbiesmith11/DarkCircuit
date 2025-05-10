@@ -430,18 +430,24 @@ export const XTerminal: React.FC<XTerminalProps> = ({
     };
 
     ws.onmessage = (event) => {
-      // Process all terminal output for command tracking
-      handleTerminalOutput(event.data);
-
       // Handle regular terminal display
       if (xtermRef.current) {
         // Handle both text and binary messages
         if (typeof event.data === 'string') {
-          // Skip processing special messages that start with __OUTPUT__
-          if (!event.data.startsWith('__OUTPUT__')) {
-            xtermRef.current.write(event.data);
+          // Skip processing agent commands
+          if (event.data.startsWith('__AGENT_COMMAND__:')) {
+            // Remove the prefix
+            const strippedData = event.data.replace(/^__AGENT_COMMAND__:/, '');
+            // Process the stripped data
+            handleTerminalOutput(strippedData);
+            return; // Do not write agent commands to the terminal
           }
+          // Process all terminal output for command tracking
+          handleTerminalOutput(event.data);
+          xtermRef.current.write(event.data);
         } else {
+          // Process all terminal output for command tracking
+          handleTerminalOutput(event.data);
           // Handle binary data (for proper terminal escape sequences)
           const reader = new FileReader();
           reader.onload = () => {

@@ -8,7 +8,7 @@ from langchain_community.embeddings import FastEmbedEmbeddings
 
 _cached_retriever = None
 
-def load_static_rag_context(docs_path="/docs", k=4, chunk_size=1024, chunk_overlap=100):
+def load_static_rag_context(docs_path="docs", k=4, chunk_size=1024, chunk_overlap=100):
     """
        Load PDF documents from the given directory, split their content into overlapping
        chunks, embed those chunks into a vector space, and return a FAISS retriever for similarity search.
