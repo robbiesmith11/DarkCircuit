@@ -11,7 +11,6 @@ frontend/DarkCircuit/src/
 
 full-modal-deployment/node_modules
 full-modal-deployment/frontend/.env
-full-modal-deployment/frontend/dist
 full-modal-deployment/frontend/node_modules
 full-modal-deployment/package-lock.json
 full-modal-deployment/package.json
