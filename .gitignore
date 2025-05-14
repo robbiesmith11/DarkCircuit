@@ -14,3 +14,6 @@ full-modal-deployment/frontend/.env
 full-modal-deployment/frontend/node_modules
 full-modal-deployment/package-lock.json
 full-modal-deployment/package.json
+
+exe_build/build
+exe_build/dist
