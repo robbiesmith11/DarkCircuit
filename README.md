@@ -1,31 +1,57 @@
 # DarkCircuit
-## 🛠️ AI Hacking Lab with Streamlit, Ollama, and Kali Linux
+## 🛠️ AI Hacking Lab with Modal Cloud Deployment and Local Dev / EXE Build
 
 This project provides a **fully integrated AI-powered hacking lab** that includes:
-- **A Streamlit UI** for chatting with an LLM and executing Kali Linux commands.
-- **An Ollama container** that serves an LLM, allowing users to select and chat with different models.
-- **A Kali Linux container** where users can run hacking tools directly from the UI.
+- **A React frontend UI** for chatting with an LLM and executing commands in a Pwnbox instance in HackTheBox.
+- **LangGraph Agent** that uses OpenAI models for the LLM portion and tools such as Run SSH commands, RAG, and DuckDuckGo search.
 
 ---
 
 ## **📂 Repository Structure**
 ```bash
 /project-root
-│── docker-compose.yml # Orchestrates all containers
-│── README.md # This documentation file
-│── streamlit/ # Streamlit UI for LLM chat & Kali terminal
-│ ├── Dockerfile # Builds the Streamlit UI container
-│ ├── app.py # Main Streamlit application
-│ ├── requirements.txt # Python dependencies
-│── ollama/ # Ollama LLM container
-│ ├── Dockerfile # Builds Ollama with model auto-pulling
-│ ├── entrypoint.sh # Ensures models are pulled and server starts
-│ ├── models.txt # List of models to pull from Ollama
-│ ├── .gitignore # Ignores large model files
-│ ├── models/ # Shared folder for storing LLM models
-│── kali/ # Kali Linux container
-│ ├── Dockerfile # Builds the Kali container with SSH enabled
-│ ├── entrypoint.sh # Configures SSH and sets up the root password
+│
+│── README.md # This documentation file and guide to Repository
+│
+│── build/ # Directory for fully built app
+│  └── DarkCircuit.zip # Zipped DarkCircuit App
+│ 
+│── docs/ # RAG documents
+│  
+│── local-deployment/ # Implementation to run locally and build exe
+│  ├── frontend/ # React frontend code and style scripts
+│  │  ├── dist/ # NPM build of Frontend
+│  │  ├── public/ # Files to add to frontend build
+│  │  └── src/ # React frontend code
+│  │
+│  ├── icons/ # Exe icons
+│  ├── agent_utils.py # Utilities for loading system prompts and optimising commands
+│  ├── darkcircuit_agent_modular.py # LangGraph agent script
+│  ├── local_app.py # Main app script
+│  ├── Rag_tool.py # RAG Tool
+│  ├── DarkCircuit_Linux.spec # Pyinstaller Linux build script
+│  ├── DarkCircuit_Windows.spec # Pyinstaller Windows build script
+│  ├── README.md # Guide for developing locally and building exe
+│  └── requirements.txt # Python dependencies for local and build
+│  
+│── full-modal-deployment/ # Implementation to deploy in Modal cloud
+│  ├── frontend/ # React frontend code and style scripts
+│  │  ├── dist/ # NPM build of Frontend
+│  │  ├── public/ # Files to add to frontend build
+│  │  └── src/ # React frontend code
+│  │
+│  ├── darkcircuit_agent.py # LangGraph agent script
+│  ├── darkcircuit_app.py # Main app script
+│  ├── README.md # Guide for deploying on Modal
+│  └── requirements.txt # Python dependencies for Modal
+│  
+│── media/ # App's visual style files and documentation
+│  ├── Logos/ # Logo images
+│  └── README.md # Visual style guide
+│  
+│── RAG_langchain/ # RAG experimentations
+│
+└── prompt_example.txt # Examples of some effective system prompts
 ```
 
 ---
@@ -33,70 +59,25 @@ This project provides a **fully integrated AI-powered hacking lab** that include
 ## 🚀 Getting Started
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/robbiesmith11/DarkCircuit-
-cd DarkCircuit-
+git clone https://github.com/robbiesmith11/DarkCircuit
+cd DarkCircuit
 ```
 
-### 2. Modify `models.txt` (Optional)
-Edit `ollama/models.txt` to specify the LLMs you want to pull, e.g.:
-```bash
-mistral
-llama3
-phi3:3.8b
-```
-> ⚠️ Must be available on [Ollama](https://ollama.com/)
+### 2. To Run and Deploy in the Cloud
+Navigate to `/project-root/full-modal-deployment` and consult `README.md` file.
 
-### 3. Build and Run the Containers
-```bash
-docker-compose up --build
-```
-- This will build and start the Streamlit UI, Ollama, and Kali Linux.
-- Ollama will automatically pull the models listed in `models.txt`.
-
-### 4. Access the UI
-Once running, open http://localhost:8501 in your browser.
+### 3. To Develop & Run Locally and/or Build Native EXE
+Navigate to `/project-root/local-deployment` and consult `README.md` file.
 
 ## 🖥️ Features
-### Streamlit UI
+### React  UI
 - Chat with an LLM – Select different models and have conversations.
-- Real-time Kali Terminal – Execute commands and see live output.
+- Real-time Terminal – Execute commands and see live output.
 
-### Ollama LLM
-- Automatically pulls models from `models.txt` on startup.
-- Allows dynamic model selection in the UI.
+### OpenAI Models
+- Allows dynamic model selection and system prompt changes in the UI to chat with LLM.
 
-### Kali Linux
-- Fully operational Kali environment inside Docker.
-- Root access with SSH support (`root/kali`).
+### Pwnbox Instance
+- Fully operational Pwnbox environment run from and connected to on HackTheBox.
 
 ## 🛠️ Development & Customization
-### 🔹 Modify Available LLM Models
-
-To add or remove models, edit `ollama/models.txt` and restart the Ollama container:
-```bash
-docker-compose restart ollama
-```
-
-### 🔹 Debugging
-Check logs for any issues:
-```bash
-docker-compose logs -f
-```
-
-If SSH isn’t working, manually reset the root password inside the Kali container:
-```bash
-docker exec -it kali bash
-echo "root:kali" | chpasswd
-service ssh restart
-```
-
-curl pull command
-```bash
-curl -X POST "<modal-server-link>/api/pull" \
-  -H "Authorization: Bearer <modal-api-key>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "<model-name>",
-    "stream": false
-  }' 
-```

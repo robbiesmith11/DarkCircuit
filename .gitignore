@@ -5,7 +5,6 @@ package.json
 package-lock.json
 node_modules
 _internal
-build
 frontend/DarkCircuit/src/
 .env
 
@@ -15,5 +14,4 @@ full-modal-deployment/frontend/node_modules
 full-modal-deployment/package-lock.json
 full-modal-deployment/package.json
 
-exe_build/build
-exe_build/dist
+local-deployment/build
