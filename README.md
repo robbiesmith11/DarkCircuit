@@ -12,6 +12,11 @@ This project provides a **fully integrated AI-powered hacking lab** that include
 /project-root
 │
 │── README.md # This documentation file and guide to Repository
+│
+│── build/ # Folder for completely built app
+│  └── DarkCircuit/ # DarkCircuit app
+│     ├── _internal/ # Internal files for build
+│     └── DarkCircuit.exe # Executable
 │ 
 │── docs/ # RAG documents
 │  
