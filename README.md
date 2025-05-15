@@ -12,9 +12,6 @@ This project provides a **fully integrated AI-powered hacking lab** that include
 /project-root
 │
 │── README.md # This documentation file and guide to Repository
-│
-│── build/ # Directory for fully built app
-│  └── DarkCircuit.zip # Zipped DarkCircuit App
 │ 
 │── docs/ # RAG documents
 │  
@@ -79,5 +76,3 @@ Navigate to `/project-root/local-deployment` and consult `README.md` file.
 
 ### Pwnbox Instance
 - Fully operational Pwnbox environment run from and connected to on HackTheBox.
-
-## 🛠️ Development & Customization

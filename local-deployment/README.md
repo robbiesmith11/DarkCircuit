@@ -88,8 +88,8 @@ You can go through the questions in the HackTheBox challenge by asking the quest
 Can you get the flag and tell me what it is?
 ```
 
-> [!INFO]
->You can try out different OpenAI models and system prompts easily by clicking the `AI Configuration` button in the Chat Interface without having make backend changes. You can permanently change the app's default system prompts by editing `/project-root/local-deployment/frontend/public/prompts.json` and [re-building the frontend](#frontend-development).
+> [!NOTE]
+> You can try out different OpenAI models and system prompts easily by clicking the `AI Configuration` button in the Chat Interface without having make backend changes. You can permanently change the app's default system prompts by editing `/project-root/local-deployment/frontend/public/prompts.json` and [re-building the frontend](#frontend-development).
 
 
 ## 🛠️ Building a Native Executable
