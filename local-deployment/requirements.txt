@@ -1,0 +1,16 @@
+paramiko
+websockets
+langchain_openai
+langchain_community
+langgraph
+duckduckgo_search==7.5.5
+langchain_core
+uvicorn
+pypdf
+langchain_text_splitters
+fastembed>=0.1.0
+faiss-cpu
+fastapi
+sqlite3
+tzdata
+MySQLdb
