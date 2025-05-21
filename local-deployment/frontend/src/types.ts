@@ -8,6 +8,7 @@ export interface DebugEvent {
   type: 'thinking' | 'tool_call' | 'tool_result' | 'token';
   timestamp: Date;
   content: string;
+  isContextAware?: boolean;
 }
 
 export interface Model {

@@ -38,7 +38,7 @@ class Darkcircuit_Agent:
     """
 
     def __init__(self,
-                 model_name="gpt-4o-mini",
+                 model_name="gpt-3.5-turbo",  # Default to cheaper model
                  reasoning_prompt=None,
                  response_prompt=None,
                  ssh_command_runner: Optional[Callable[[str, int], Awaitable[Dict[str, Any]]]] = None):
@@ -61,6 +61,10 @@ class Darkcircuit_Agent:
         self.llm = ChatOpenAI(model=model_name, streaming=True, api_key=api_key)
         self.streaming_handler = None
         self.terminal_command_id = 0
+        
+        # Keep track of conversation history
+        self.chat_history = []
+        self.max_history_length = 10  # Keep at 10 messages to ensure sufficient context
 
         # Initialize agent tools
         self.ssh_command_runner = ssh_command_runner
@@ -77,6 +81,29 @@ class Darkcircuit_Agent:
                 metadata = doc.metadata
                 content_parts.append(f"[Source {i + 1}] {doc.page_content}")
             return "\n\n".join(content_parts)
+            
+        @tool
+        def rag_retrieve_with_context(query: str) -> str:
+            """
+            [CONTEXT-AWARE RAG] Search for relevant documents using conversation history to improve results.
+            Use this tool for follow-up questions or when the query is related to previous conversation.
+            """
+            from Rag_tool import rag_retrieve_with_history
+            
+            # Extract recent conversation history from the agent's state
+            chat_history = []
+            if hasattr(self, 'chat_history') and self.chat_history:
+                chat_history = self.chat_history
+            
+            # Use the history-aware retriever
+            result = rag_retrieve_with_history(
+                query=query, 
+                chat_history=chat_history,
+                model_name="gpt-4o-mini"  # Using cost-effective model for RAG results
+            )
+            
+            # Add a clear indicator at the beginning of the response
+            return "🧠 [CONTEXT-AWARE SEARCH RESULTS] Using conversation history to enhance retrieval:\n\n" + result
 
         @tool
         async def run_command(command: str) -> str:
@@ -141,7 +168,8 @@ class Darkcircuit_Agent:
 
         self.run_command = run_command
         self.rag_retrieve = rag_retrieve
-        self.tools = [self.search, self.run_command, self.rag_retrieve]
+        self.rag_retrieve_with_context = rag_retrieve_with_context
+        self.tools = [self.search, self.run_command, self.rag_retrieve, self.rag_retrieve_with_context]
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
         # Load default prompts from file or use hardcoded defaults
@@ -226,8 +254,59 @@ class Darkcircuit_Agent:
                         filtered_messages.append(msg)
                         break
 
+            # Enhance with learning recommendations if available
+            reasoning_prompt_content = self.reasoning_prompt.content
+            
+            # Add learning recommendations if available
+            if hasattr(self, 'get_learning_recommendations'):
+                try:
+                    recommendations = self.get_learning_recommendations()
+                    
+                    # Create an addition to the prompt with learned techniques
+                    learned_techniques = []
+                    
+                    # Add flag techniques
+                    if recommendations.get("flag_techniques"):
+                        techniques = recommendations["flag_techniques"]
+                        learned_techniques.append("PREVIOUSLY SUCCESSFUL FLAG-FINDING TECHNIQUES:")
+                        for i, technique in enumerate(techniques):
+                            description = technique.get("description", "")
+                            key_commands = technique.get("key_commands", [])
+                            learned_techniques.append(f"{i+1}. {description}")
+                            if key_commands:
+                                learned_techniques.append("   Key commands:")
+                                for cmd in key_commands:
+                                    learned_techniques.append(f"   - {cmd}")
+                                    
+                    # Add recommended next steps
+                    if recommendations.get("next_steps"):
+                        next_steps = recommendations["next_steps"]
+                        if next_steps:
+                            learned_techniques.append("\nRECOMMENDED NEXT COMMANDS:")
+                            for i, cmd in enumerate(next_steps):
+                                learned_techniques.append(f"{i+1}. {cmd}")
+                    
+                    # Add similar commands that worked before
+                    if recommendations.get("similar_commands"):
+                        similar_commands = recommendations["similar_commands"]
+                        if similar_commands:
+                            learned_techniques.append("\nSIMILAR COMMANDS THAT WORKED BEFORE:")
+                            for i, cmd in enumerate(similar_commands):
+                                learned_techniques.append(f"{i+1}. {cmd}")
+                    
+                    # Only add to prompt if we have recommendations
+                    if learned_techniques:
+                        learning_addition = "\n\n# LEARNED FROM PREVIOUS SUCCESSES\n" + "\n".join(learned_techniques)
+                        reasoning_prompt_content += learning_addition
+                        print(f"[Agent] Enhanced prompt with {len(learned_techniques)} learned techniques")
+                except Exception as e:
+                    print(f"[Agent] Error enhancing prompt with learning: {e}")
+            
+            # Create an enhanced system message with learning
+            enhanced_system_prompt = SystemMessage(content=reasoning_prompt_content)
+            
             # Add the system prompt
-            messages_to_send = [self.reasoning_prompt] + filtered_messages
+            messages_to_send = [enhanced_system_prompt] + filtered_messages
 
             # Log what we're sending
             print(f"[Agent] Reasoner sending {len(messages_to_send)} messages")
@@ -248,8 +327,73 @@ class Darkcircuit_Agent:
             result_text = getattr(result, "content", "").strip().lower()
             print(f"[Agent] Reasoner result preview: {result_text[:100]}...")
 
-            # Determine if we're done based on the magic phrase
+            # Count how many commands were run by looking at tool calls in the history
+            command_count = 0
+            for msg in state["messages"]:
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tool_call in msg.tool_calls:
+                        if tool_call.get('name') == 'run_command':
+                            command_count += 1
+            
+            # Custom logic for determining done status
+            # Only stop if we explicitly see the ready signal AND have run enough commands
+            # or if we've run a very high number of commands (prevent infinite loops)
             done = "[ready to answer]" in result_text
+            
+            # If in HTB/security context, enforce minimum command count
+            is_security_context = any(term in result_text.lower() for term in 
+                                    ["hack the box", "htb", "exploit", "nmap", "vulnerability", 
+                                     "security", "ssh", "brute force", "password"]) or \
+                               any(term.lower() in self.last_query.lower() if hasattr(self, 'last_query') and self.last_query else False 
+                                   for term in ["hack the box", "htb", "exploit", "flag", "challenge", "lab", "target"])
+            
+            # Check for flag patterns in the entire conversation history
+            has_flag = False
+            for msg in state["messages"]:
+                content = getattr(msg, "content", "").lower()
+                if any(pattern in content for pattern in ["[flag", "flag:", "htb{", "root:", "user:", "flag{"]) and \
+                   any(indicator in content for indicator in ["found", "discovered", "got", "here", "is"]):  
+                    has_flag = True
+                    break
+            
+            # Higher command count minimum for security context
+            REQUIRED_COMMANDS = 20 if is_security_context else 10
+            
+            # Enforce strict minimum command count for security contexts
+            if is_security_context and command_count < REQUIRED_COMMANDS and not has_flag:
+                # Force continued execution if not enough commands have been tried
+                force_execution = True
+                done = False
+                print(f"[Agent] Only {command_count}/{REQUIRED_COMMANDS} required commands executed, continuing execution")
+            
+            # In security contexts, NEVER stop unless flag found or very high command count
+            if is_security_context and not has_flag and command_count < 50:  # Absolute upper limit is 50 commands
+                done = False  # Keep going until we find the flag
+                print(f"[Agent] Security context detected and flag not found. Continuing regardless of ready signal.")
+            
+            # If we don't see tool calls in the result, but we're not done, check if the model is just thinking
+            if not done and not hasattr(result, "tool_calls") and "[ready to answer]" not in result_text and is_security_context:
+                # Check the text for indicators it's asking for permission or planning next steps
+                if any(phrase in result_text for phrase in ["should i", "shall i", "would you", "do you want", "next step", "proceed"]):
+                    # Enforce tool usage rather than thinking by overriding the result
+                    # Create a default command to force execution
+                    print(f"[Agent] Detected planning without action. Forcing command execution.")
+                    
+                    # Determine a good default command based on context
+                    default_cmd = "whoami && pwd && ls -la"
+                    if "web" in result_text or "http" in result_text:
+                        default_cmd = "curl -v http://localhost/ || curl -v http://127.0.0.1/"
+                    elif "port" in result_text or "scan" in result_text:
+                        default_cmd = "nmap -p- --min-rate 5000 -T4 127.0.0.1 || nmap -p- --min-rate 5000 -T4 localhost"
+                    
+                    # Create a tool call to force execution
+                    from langchain_core.messages import AIMessage
+                    result = AIMessage(
+                        content="I'll run a command to gather more information.",
+                        tool_calls=[{"name": "run_command", "args": {"command": default_cmd}}]
+                    )
+                    done = False
+            
             print(f"[Agent] Done status: {done}")
 
             # Flush the thinking buffer to send consolidated thinking content
@@ -496,14 +640,61 @@ class Darkcircuit_Agent:
         """
         print(f"[Agent] Routing from reasoner. Done: {state.get('done')}")
 
+        # Get last message content for context
+        last_message = state["messages"][-1] if state["messages"] else None
+        message_content = getattr(last_message, "content", "").lower() if last_message else ""
+        has_tool_calls = hasattr(last_message, "tool_calls") and last_message.tool_calls
+
+        # Check for questions about whether to proceed
+        asks_to_proceed = any(phrase in message_content for phrase in 
+                           ["shall we proceed", "should we proceed", "would you like to proceed", 
+                            "do you want me to", "should i proceed", "shall i proceed", "let me know", 
+                            "what would you like", "next step", "would you like", "how should i"])
+
+        # Is this a security context?
+        is_security_context = False
+        for msg in state["messages"]:
+            content = getattr(msg, "content", "").lower()
+            if any(term in content for term in ["hack the box", "htb", "exploit", "vulnerability", 
+                                             "security", "ssh", "brute force", "password", "flag", "ctf"]):
+                is_security_context = True
+                break
+
+        # If asking for permission to continue OR in security context and not making progress, force execution
+        force_execution = asks_to_proceed or (
+            is_security_context and 
+            not has_tool_calls and 
+            not state.get('done', False) and
+            "[ready to answer]" not in message_content
+        )
+            
+        if force_execution:
+            print(f"[Agent] Detected need for forced execution - automatically running command")
+            # Force execution to continue by routing to tools node
+            if not has_tool_calls:
+                # Create a dummy tool call message to force execution
+                from langchain_core.messages import AIMessage
+                
+                # Determine a good default command based on context
+                default_cmd = "whoami && pwd && ls -la"
+                if "web" in message_content or "http" in message_content:
+                    default_cmd = "curl -v http://localhost/ || curl -v http://127.0.0.1/"
+                elif "port" in message_content or "scan" in message_content:
+                    default_cmd = "nmap -p- --min-rate 5000 -T4 127.0.0.1 || nmap -p- --min-rate 5000 -T4 localhost"
+                
+                tool_msg = AIMessage(
+                    content="Let's proceed with further enumeration and exploitation",
+                    tool_calls=[{"name": "run_command", "args": {"command": default_cmd}}]
+                )
+                state["messages"].append(tool_msg)
+                state["done"] = False
+                return "tools"
+
         # If there was an error or we're explicitly done, go to responder
         if state.get('done', False):
             return "responder"
 
         # Check if the last message contains tool calls
-        last_message = state["messages"][-1] if state["messages"] else None
-        has_tool_calls = hasattr(last_message, "tool_calls") and last_message.tool_calls
-
         if has_tool_calls:
             return "tools"  # Process tool calls
         else:
@@ -520,7 +711,18 @@ class Darkcircuit_Agent:
         Yields:
             dict: Event objects for streaming (tokens, thinking, tool calls, etc.)
         """
-        input_messages = [HumanMessage(content=prompt)]
+        # Store the last user query for context detection
+        self.last_query = prompt
+        
+        # Add user message to chat history
+        user_message = HumanMessage(content=prompt)
+        self.chat_history.append(user_message)
+        
+        # Maintain a fixed size history window
+        if len(self.chat_history) > self.max_history_length:
+            self.chat_history = self.chat_history[-self.max_history_length:]
+        
+        input_messages = [user_message]
 
         # Initialize streaming handler
         self.streaming_handler = StreamingHandler(output_target="debug")
@@ -530,12 +732,26 @@ class Darkcircuit_Agent:
 
         async def run_graph():
             print("[Agent] Starting graph execution")
-            await self.react_graph.ainvoke(
+            result = await self.react_graph.ainvoke(
                 {"messages": input_messages},
                 config={"callbacks": [self.streaming_handler]}
             )
             await self.streaming_handler.end()
             print("[Agent] Graph execution complete")
+            
+            # Extract the AI's final answer to add to chat history
+            if result and "messages" in result:
+                final_messages = result["messages"]
+                if final_messages and len(final_messages) > 0:
+                    last_message = final_messages[-1]
+                    if hasattr(last_message, "content") and not isinstance(last_message, HumanMessage):
+                        # Add AI message to chat history
+                        ai_message = AIMessage(content=last_message.content)
+                        self.chat_history.append(ai_message)
+                        
+                        # Maintain a fixed size history window
+                        if len(self.chat_history) > self.max_history_length:
+                            self.chat_history = self.chat_history[-self.max_history_length:]
 
         graph_task = asyncio.create_task(run_graph())
 

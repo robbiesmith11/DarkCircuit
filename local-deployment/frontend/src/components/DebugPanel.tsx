@@ -114,7 +114,9 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ events, onClear }) => {
                           event.type === 'thinking'
                               ? 'bg-purple-900/30 border-purple-500'
                               : event.type === 'tool_call'
-                                  ? 'bg-blue-900/30 border-blue-500'
+                                  ? event.isContextAware
+                                      ? 'bg-pink-900/30 border-pink-500 border-l-8' // Special styling for context-aware tools
+                                      : 'bg-blue-900/30 border-blue-500'
                                   : event.type === 'tool_result'
                                       ? 'bg-green-900/30 border-green-500'
                                       : 'bg-gray-800 border-gray-500'
@@ -125,7 +127,9 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ events, onClear }) => {
                         {event.type === 'thinking'
                             ? '🧠 Thinking'
                             : event.type === 'tool_call'
-                                ? '🔧 Tool Call'
+                                ? event.isContextAware
+                                    ? '🧠 Context-Aware Tool Call'
+                                    : '🔧 Tool Call'
                                 : event.type === 'tool_result'
                                     ? '📊 Tool Result'
                                     : '💬 Token'}

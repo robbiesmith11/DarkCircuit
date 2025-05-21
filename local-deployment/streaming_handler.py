@@ -80,12 +80,16 @@ class StreamingHandler(BaseCallbackHandler):
 
         print(f"[StreamingHandler] Starting tool: {tool_name} with input: {command}")
 
+        # Check if this is the context-aware RAG tool
+        is_context_aware = tool_name == "rag_retrieve_with_context"
+        
         # Standardize the format for tool calls
         await self.queue.put({
             "type": "tool_call",
             "name": tool_name,
             "description": tool_description,
-            "input": command
+            "input": command,
+            "is_context_aware": is_context_aware
         })
 
     async def on_tool_end(self, output, **kwargs):

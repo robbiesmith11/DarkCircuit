@@ -25,4 +25,4 @@ def flush_to_volume():
             f.write(json.dumps(rec) + "\n")
 
 
-#TO RUN : modal run flush_traces.py::flush_to_volume
+#TO RUN : modal run flusher.py::flush_to_volume

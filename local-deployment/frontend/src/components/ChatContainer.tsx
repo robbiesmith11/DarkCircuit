@@ -337,12 +337,16 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
               const toolInput = typeof parsed.input === 'string'
                 ? parsed.input
                 : JSON.stringify(parsed.input, null, 2);
+                
+              // Check if this is the context-aware RAG tool
+              const isContextAware = parsed.is_context_aware === true;
 
               // Add to debug panel
               setDebugEvents(prev => [...prev, {
                 type: 'tool_call',
                 timestamp: new Date(),
-                content: `Tool: ${toolName}\nDescription: ${toolDesc}\nInput: ${toolInput}`
+                content: `${isContextAware ? '🧠 CONTEXT-AWARE RAG SEARCH\n' : ''}Tool: ${toolName}\nDescription: ${toolDesc}\nInput: ${toolInput}`,
+                isContextAware: isContextAware
               }]);
 
             }

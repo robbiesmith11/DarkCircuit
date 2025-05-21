@@ -11,6 +11,5 @@ langchain_text_splitters
 fastembed>=0.1.0
 faiss-cpu
 fastapi
-sqlite3
 tzdata
-MySQLdb
+mysqlclient
