@@ -94,7 +94,7 @@ User Query → Reasoner → Tools → Responder → Streaming Response
 
 ```bash
 DarkCircuit/
-├── README.md                           # 📋 Main project documentation                        # 🤖 AI assistant guidelines
+├── README.md                           # 📋 Main project documentation                        
 ├── TEST_PLANS_AND_CASES.md           # 🧪 Comprehensive testing documentation
 ├── LICENSE                           # ⚖️ Project license
 │
