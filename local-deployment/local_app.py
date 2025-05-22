@@ -23,8 +23,13 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from darkcircuit_agent_modular import Darkcircuit_Agent
 from utils import get_path
 
-# FastAPI backend server
-app = FastAPI()
+# FastAPI backend server - Main application instance
+# Handles HTTP routes, WebSocket connections, and serves the React frontend
+app = FastAPI(
+    title="DarkCircuit API",
+    description="AI-powered cybersecurity laboratory backend",
+    version="1.0.0"
+)
 
 # CORS middleware
 app.add_middleware(
@@ -74,15 +79,18 @@ command_lock = asyncio.Lock()
 # Unique ready-marker to inject at each prompt
 PROMPT_READY_MARKER = "\033]1337;CMD_READY\007"
 
-def _strip_ansi_codes(text: any):
+def _strip_ansi_codes(text: any) -> str:
     """
-    Strip ANSI escape sequences from a string
+    Strip ANSI escape sequences from terminal output.
+    
+    ANSI escape sequences are used for terminal formatting (colors, cursor movement, etc.)
+    but interfere with text processing. This function removes them to get clean text.
 
     Args:
         text (any): The text containing ANSI escape codes
 
     Returns:
-        str: Clean text without ANSI codes
+        str: Clean text without ANSI codes, or original if not a string
     """
     # This regex matches all ANSI escape sequences
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -91,7 +99,21 @@ def _strip_ansi_codes(text: any):
 def _setup_ssh_connection(host: str, port: int, username: str, password: Optional[str] = None,
                          key_path: Optional[str] = None) -> Dict[str, Any]:
     """
-    Establish an SSH connection to an external server
+    Establish a secure SSH connection to an external server (typically HackTheBox Pwnbox).
+    
+    This function handles both password and key-based authentication, implements connection
+    timeouts, and validates the connection with a test command. It properly manages the
+    global ssh_state to ensure clean connection handling.
+    
+    Args:
+        host (str): IP address or hostname of the SSH server
+        port (int): SSH port (typically 22)
+        username (str): SSH username
+        password (Optional[str]): Password for authentication (if not using key)
+        key_path (Optional[str]): Path to private key file for key-based auth
+        
+    Returns:
+        Dict[str, Any]: Connection result with success status and message/error
     """
     global ssh_state
     
@@ -175,8 +197,19 @@ def _setup_ssh_connection(host: str, port: int, username: str, password: Optiona
             "error": f"Failed to establish SSH connection: {str(e)}"
         }
 
-def _close_ssh_connection():
-    """Close the SSH connection and clean up resources"""
+def _close_ssh_connection() -> None:
+    """
+    Gracefully close the SSH connection and clean up all related resources.
+    
+    This function ensures proper cleanup by:
+    1. Stopping any running operations
+    2. Closing the SSH channel
+    3. Closing the transport layer
+    4. Resetting the global ssh_state
+    
+    It uses exception handling to ensure cleanup continues even if individual
+    steps fail, preventing resource leaks.
+    """
     global ssh_state
     
     ssh_state["running"] = False
@@ -206,6 +239,29 @@ def _close_ssh_connection():
 
 
 async def run_ssh_command(command: str, timeout: int = 1200) -> Dict[str, Any]:
+    """
+    Execute a command on the remote SSH server with intelligent output detection.
+    
+    This function handles command execution through WebSocket communication,
+    implements smart prompt detection for various CLI tools, and manages
+    output buffering with timeout handling.
+    
+    The function detects completion by:
+    1. Monitoring output stability (no changes for ~1 second)
+    2. Pattern matching against known CLI prompts (shell, database, security tools)
+    3. Timeout fallback after the specified duration
+    
+    Args:
+        command (str): The command to execute on the remote system
+        timeout (int): Maximum execution time in seconds (default: 1200)
+        
+    Returns:
+        Dict[str, Any]: Execution result containing:
+            - success (bool): Whether command completed successfully
+            - output (str): Command output (cleaned of ANSI codes)
+            - error (str): Error message if any
+            - exit_code (int): Exit code (0 for success, -1 for timeout/error)
+    """
     global terminal_ws_clients, terminal_output_buffers
 
     if not terminal_ws_clients:
@@ -290,9 +346,27 @@ async def run_ssh_command(command: str, timeout: int = 1200) -> Dict[str, Any]:
         return {"success": False, "output": final, "error": "Timed out", "exit_code": -1}
 
 
-# API endpoint to SSH and set up the terminal
+# SSH Connection Management Endpoints
+# These endpoints handle establishing and managing SSH connections to external servers
+
 @app.post("/api/ssh/connect")
 async def connect_ssh(request: Request):
+    """
+    Establish SSH connection to external server (typically HackTheBox Pwnbox).
+    
+    Accepts SSH credentials and attempts to establish a secure connection.
+    Validates the connection and updates global ssh_state accordingly.
+    
+    Request Body:
+        - host: SSH server hostname/IP
+        - port: SSH port (default 22)
+        - username: SSH username
+        - password: SSH password
+        - key_path: Optional path to private key
+        
+    Returns:
+        JSON response with success status and message
+    """
     try:
         data = await request.json()
 
@@ -312,7 +386,15 @@ async def connect_ssh(request: Request):
 
 @app.post("/api/ssh/disconnect")
 async def disconnect_ssh():
-    """Disconnect from SSH server"""
+    """
+    Disconnect from the current SSH server and clean up resources.
+    
+    Gracefully closes the SSH connection and resets the connection state.
+    Safe to call even if no connection is active.
+    
+    Returns:
+        JSON response confirming disconnection
+    """
 
     # Now close the SSH connection
     _close_ssh_connection()
@@ -327,9 +409,35 @@ async def submit_terminal_output(output_data: TerminalOutput):
     """
     return {"success": True}
 
-# REST API endpoint for chat completions with streaming
+# AI Agent Chat API
+# This endpoint handles chat completions with the LangGraph AI agent
+
 @app.post("/api/chat/completions")
 async def chat_completions(request: ChatRequest):
+    """
+    Process chat completions using the DarkCircuit AI agent with streaming response.
+    
+    This endpoint:
+    1. Creates a new agent instance with the specified model and prompts
+    2. Processes the user query through the LangGraph workflow
+    3. Streams back real-time responses including tokens, tool calls, and debug info
+    4. Handles both chat content and debug panel events
+    
+    The agent workflow: User Query → Reasoner → Tools → Responder → Streaming Response
+    
+    Request Body:
+        - model: OpenAI model name (e.g., 'gpt-4o-mini')
+        - messages: Chat history array
+        - reasoner_prompt: Optional custom reasoning prompt
+        - responder_prompt: Optional custom response prompt
+        
+    Returns:
+        Server-Sent Events stream with:
+        - token events (chat content)
+        - thinking events (reasoning process)
+        - tool_call events (command execution)
+        - tool_result events (command output)
+    """
     """
     REST API endpoint for chat completions with streaming.
     """
@@ -409,9 +517,32 @@ async def chat_completions(request: ChatRequest):
         media_type="text/event-stream"
     )
 
-# WebSocket endpoint for terminal
+# WebSocket Terminal Endpoint
+# Provides real-time bidirectional communication with the SSH terminal
+
 @app.websocket("/ws/ssh-terminal")
 async def terminal_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time terminal communication.
+    
+    This endpoint establishes a bidirectional WebSocket connection that:
+    1. Bridges the web frontend with the SSH connection
+    2. Handles terminal PTY allocation for proper terminal emulation
+    3. Manages real-time data flow in both directions
+    4. Implements connection monitoring and automatic cleanup
+    
+    The connection flow:
+    Frontend Terminal ↔ WebSocket ↔ SSH Channel ↔ Remote Shell
+    
+    Features:
+    - Raw terminal data transmission for proper formatting
+    - Automatic reconnection handling
+    - Connection state management
+    - Output buffering for agent command execution
+    
+    Args:
+        websocket: The WebSocket connection from the frontend
+    """
     await websocket.accept()
 
     # Add to the list of websockets to receive SSH command outputs
@@ -459,7 +590,8 @@ async def terminal_endpoint(websocket: WebSocket):
         # Mark as running
         ssh_state["running"] = True
 
-        # Function to read from SSH and send to WebSocket
+        # SSH to WebSocket data flow handler
+        # Reads data from SSH channel and forwards to WebSocket client
         async def ssh_to_ws():
             try:
                 while ssh_state["running"] and not channel.exit_status_ready():
@@ -495,7 +627,8 @@ async def terminal_endpoint(websocket: WebSocket):
             finally:
                 ssh_state["running"] = False
 
-        # Function to read from WebSocket and send to SSH
+        # WebSocket to SSH data flow handler
+        # Receives user input from WebSocket and forwards to SSH channel
         async def ws_to_ssh():
             try:
                 while ssh_state["running"]:
