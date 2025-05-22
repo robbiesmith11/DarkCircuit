@@ -112,7 +112,6 @@ class AgentTools:
         except Exception as e:
             return f"Error executing command: {str(e)}"
 
-    @tool
     def rag_retrieve(self, query: str) -> str:
         """Search for relevant documents included are writeups from hack the box challenges using RAG"""
         retriever = load_static_rag_context()
@@ -125,3 +124,19 @@ class AgentTools:
             metadata = doc.metadata
             content_parts.append(f"[Source {i + 1}] {doc.page_content}")
         return "\n\n".join(content_parts)
+
+
+# Create a standalone tool function for LangChain compatibility
+@tool
+def rag_retrieve_tool(query: str) -> str:
+    """Search for relevant documents included are writeups from hack the box challenges using RAG"""
+    retriever = load_static_rag_context()
+    if not retriever:
+        return "RAG functionality is not available. Please check the Rag_tool.py implementation."
+
+    docs = retriever.get_relevant_documents(query)
+    content_parts = []
+    for i, doc in enumerate(docs):
+        metadata = doc.metadata
+        content_parts.append(f"[Source {i + 1}] {doc.page_content}")
+    return "\n\n".join(content_parts)

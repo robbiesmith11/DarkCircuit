@@ -1,0 +1,39 @@
+# Testing dependencies for DarkCircuit unit tests
+# Install with: pip install -r tests/requirements-test.txt
+
+# Core testing framework
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
+pytest-cov>=4.1.0
+
+# HTTP testing for FastAPI
+httpx>=0.24.0
+requests>=2.31.0
+
+# Mocking and test utilities
+responses>=0.23.0
+freezegun>=1.2.0
+factory-boy>=3.3.0
+
+# FastAPI testing support
+fastapi[testing]>=0.104.0
+
+# WebSocket testing
+websockets>=11.0.0
+
+# Async testing utilities
+asynctest>=0.13.0; python_version<"3.8"
+
+# Code coverage reporting
+coverage[toml]>=7.3.0
+
+# Performance testing (optional)
+pytest-benchmark>=4.0.0
+
+# Test reporting
+pytest-html>=3.2.0
+pytest-json-report>=1.5.0
+
+# Parallel test execution
+pytest-xdist>=3.3.0

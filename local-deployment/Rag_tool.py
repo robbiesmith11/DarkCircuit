@@ -35,8 +35,13 @@ def load_static_rag_context(docs_path="docs", k=4, chunk_size=1024, chunk_overla
     if os.path.isdir(docs_path):
         print("Directory exists. Running Executable")
     else:
-        docs_path = "../docs"
-        print("Directory does not exist. Running locally in dev mode.")
+        fallback_path = "../docs"
+        if os.path.isdir(fallback_path):
+            docs_path = fallback_path
+            print("Directory does not exist. Running locally in dev mode.")
+        else:
+            print(f"Neither {docs_path} nor {fallback_path} directories exist.")
+            raise FileNotFoundError(f"❌ Neither {docs_path} nor {fallback_path} directories exist.")
 
     if _cached_retriever is not None:
         return _cached_retriever

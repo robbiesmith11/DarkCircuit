@@ -1,0 +1,9 @@
+# Minimal testing dependencies for basic tests
+# These are the minimum requirements to run framework verification tests
+
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
+
+# Only install these if you want coverage reporting
+# pytest-cov>=4.1.0

@@ -6,7 +6,7 @@ import json
 import time
 from typing import Optional, List, Dict, Any, Callable, Awaitable
 from pydantic import BaseModel
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, Request, WebSocket, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -333,9 +333,13 @@ async def run_ssh_command(command: str, timeout: int = 1200) -> Dict[str, Any]:
                         last_line = lines[-1]
 
                         for pattern in cli_patterns:
-                            if re.search(pattern, last_line):
-                                print(f"Detected interactive CLI prompt: {pattern} in line: {last_line}")
-                                return {"success": True, "output": cleaned, "error": "", "exit_code": 0}
+                            try:
+                                if re.search(pattern, last_line):
+                                    print(f"Detected interactive CLI prompt: {pattern} in line: {last_line}")
+                                    return {"success": True, "output": cleaned, "error": "", "exit_code": 0}
+                            except re.error as e:
+                                print(f"Invalid regex pattern {pattern}: {e}")
+                                continue
             else:
                 # Reset the counter when output changes
                 output_stable_count = 0
@@ -444,13 +448,17 @@ async def chat_completions(request: ChatRequest):
     # Convert to format expected by the agent
     prompt = request.messages[-1].content  # Take the latest user message as prompt
 
-    # Create the agent with direct SSH command execution capability
-    agent = Darkcircuit_Agent(
-        model_name=request.model,
-        reasoning_prompt=request.reasoner_prompt,
-        response_prompt=request.responder_prompt,
-        ssh_command_runner=run_ssh_command  # Pass our SSH command runner
-    )
+    try:
+        # Create the agent with direct SSH command execution capability
+        agent = Darkcircuit_Agent(
+            model_name=request.model,
+            reasoning_prompt=request.reasoner_prompt,
+            response_prompt=request.responder_prompt,
+            ssh_command_runner=run_ssh_command  # Pass our SSH command runner
+        )
+    except Exception as e:
+        # Handle agent creation errors
+        raise HTTPException(status_code=500, detail=f"Failed to initialize agent: {str(e)}")
 
     # Store the agent for later reference
     agent_id = f"agent_{int(time.time())}"
