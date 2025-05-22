@@ -194,6 +194,20 @@ class Darkcircuit_Agent:
             dict: Updated state with reasoning results
         """
         print("[Agent] Entering reasoner node with message count:", len(state["messages"]))
+        
+        # Track step count to prevent infinite loops
+        step_count = state.get("step_count", 0) + 1
+        max_steps = 35  # Maximum reasoning steps before forcing completion (increased for pentesting scenarios)
+        
+        print(f"[Agent] Reasoner step {step_count}/{max_steps}")
+        
+        if step_count >= max_steps:
+            print(f"[Agent] Maximum steps ({max_steps}) reached, forcing completion")
+            await self.streaming_handler.queue.put({
+                "type": "thinking",
+                "value": f"Maximum reasoning steps ({max_steps}) reached. Providing final response."
+            })
+            return {**state, "step_count": step_count, "done": True}
 
         # Use debug output target for reasoner
         self.streaming_handler.output_target = "debug"
@@ -257,7 +271,7 @@ class Darkcircuit_Agent:
 
             # Update the state with filtered messages and the result
             new_messages = filtered_messages + [result]
-            return {**state, "messages": new_messages, "done": done}
+            return {**state, "messages": new_messages, "done": done, "step_count": step_count}
 
         except Exception as e:
             print(f"[Agent] Error in reasoner: {str(e)}")
@@ -272,7 +286,7 @@ class Darkcircuit_Agent:
             })
 
             # Return original messages to avoid corrupting state
-            return {**state, "messages": state["messages"], "done": True}  # Force done to exit on error
+            return {**state, "messages": state["messages"], "done": True, "step_count": step_count}  # Force done to exit on error
 
     async def tools_node(self, state: MessagesState):
         """
@@ -407,7 +421,7 @@ class Darkcircuit_Agent:
                 preserved_messages.append(not_found_system_msg)
                 preserved_messages.append(not_found_tool_message)
 
-        # Update the state with preserved messages
+        # Update the state with preserved messages (preserve step_count)
         return {**state, "messages": preserved_messages}
 
     async def responder(self, state: MessagesState):
@@ -494,10 +508,16 @@ class Darkcircuit_Agent:
         Returns:
             str: Next node to execute ("tools" or "responder")
         """
-        print(f"[Agent] Routing from reasoner. Done: {state.get('done')}")
+        step_count = state.get('step_count', 0)
+        print(f"[Agent] Routing from reasoner. Done: {state.get('done')}, Step: {step_count}")
 
         # If there was an error or we're explicitly done, go to responder
         if state.get('done', False):
+            return "responder"
+            
+        # Safety check: if we've gone too many steps, force completion
+        if step_count >= 35:
+            print(f"[Agent] Step limit reached in routing, going to responder")
             return "responder"
 
         # Check if the last message contains tool calls
@@ -505,9 +525,11 @@ class Darkcircuit_Agent:
         has_tool_calls = hasattr(last_message, "tool_calls") and last_message.tool_calls
 
         if has_tool_calls:
+            print(f"[Agent] Found tool calls, going to tools node")
             return "tools"  # Process tool calls
         else:
             # No tool calls but not done yet - go to responder as fallback
+            print(f"[Agent] No tool calls, going to responder")
             return "responder"
 
     async def run_agent_streaming(self, prompt: str):
@@ -531,8 +553,11 @@ class Darkcircuit_Agent:
         async def run_graph():
             print("[Agent] Starting graph execution")
             await self.react_graph.ainvoke(
-                {"messages": input_messages},
-                config={"callbacks": [self.streaming_handler]}
+                {"messages": input_messages, "step_count": 0},
+                config={
+                    "callbacks": [self.streaming_handler],
+                    "recursion_limit": 75  # Increased for complex pentesting scenarios (was 50)
+                }
             )
             await self.streaming_handler.end()
             print("[Agent] Graph execution complete")
