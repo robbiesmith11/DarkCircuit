@@ -22,6 +22,9 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 
 from darkcircuit_agent_modular import Darkcircuit_Agent
 from utils import get_path
+from context_integration import init_darkcircuit_context
+from learning_system import init_learning_system, integrate_learning_with_agent
+
 
 # FastAPI backend server
 app = FastAPI()
@@ -46,6 +49,9 @@ class ChatRequest(BaseModel):
     reasoner_prompt: Optional[str] = None
     responder_prompt: Optional[str] = None
 
+class TargetConfig(BaseModel):
+    target_ip: str
+
 class TerminalOutput(BaseModel):
     command_id: int
     output: str
@@ -59,8 +65,9 @@ ssh_state = {
     "running": False
 }
 
-# Store active agent instances
+# Store active agent instances - persistent across requests
 active_agents = {}
+persistent_agent = None  # Single persistent agent for all sessions
 # Map WebSocket connections to their terminal output buffers
 terminal_output_buffers = {"main": ""}
 # Store active WebSocket connections for terminals
@@ -318,6 +325,260 @@ async def disconnect_ssh():
     _close_ssh_connection()
     return {"success": True, "message": "SSH connection closed"}
 
+@app.post("/api/manage/cleanup")
+async def cleanup_memory():
+    """
+    Cleanup and optimize memory usage without destroying the persistent agent.
+    Use this periodically to prevent memory bloat.
+    """
+    global persistent_agent
+    
+    if persistent_agent is None:
+        return {"success": False, "message": "No persistent agent exists"}
+        
+    # Trim history to essential items
+    if hasattr(persistent_agent, 'chat_history'):
+        # Keep only the last 5 messages
+        if len(persistent_agent.chat_history) > 5:
+            persistent_agent.chat_history = persistent_agent.chat_history[-5:]
+            
+    # Get context manager if available
+    context_manager = None
+    if hasattr(persistent_agent, 'context_manager'):
+        context_manager = persistent_agent.context_manager
+    
+    # Clean up context manager if available
+    if context_manager:
+        # Clear older command results if too many
+        if hasattr(context_manager, 'command_results') and len(context_manager.command_results) > 50:
+            # Keep the 25 most recent commands
+            sorted_commands = sorted(context_manager.command_results.items(), 
+                                    key=lambda x: x[1].get('timestamp', 0) if isinstance(x[1], dict) else 0, 
+                                    reverse=True)
+            context_manager.command_results = dict(sorted_commands[:25])
+            
+        # Save state after cleanup
+        if hasattr(context_manager, 'save_state'):
+            context_manager.save_state()
+            
+    return {"success": True, "message": "Memory cleanup successful"}
+    
+@app.post("/api/agent/stop")
+async def stop_agent_execution():
+    """
+    Emergency stop for agent execution. This terminates any running execution and 
+    forces the agent to finish with whatever results it has gathered so far.
+    """
+    global persistent_agent
+    
+    if persistent_agent is None:
+        return {"success": False, "message": "No persistent agent exists"}
+        
+    # Set the emergency stop flag
+    if hasattr(persistent_agent, 'emergency_stop'):
+        persistent_agent.emergency_stop = True
+        print("[API] Emergency stop triggered for agent execution")
+        return {"success": True, "message": "Agent execution stop signal sent"}
+    else:
+        return {"success": False, "message": "Agent does not support emergency stop"}
+        
+@app.post("/api/agent/set-timeout")
+async def set_agent_timeout(request: Request):
+    """
+    Set the maximum execution time for the agent.
+    """
+    global persistent_agent
+    
+    if persistent_agent is None:
+        return {"success": False, "message": "No persistent agent exists"}
+        
+    try:
+        data = await request.json()
+        timeout = int(data.get("timeout", 180))  # Default 3 minutes
+        
+        # Validate timeout
+        if timeout < 30:
+            return {"success": False, "message": "Timeout must be at least 30 seconds"}
+        if timeout > 600:
+            return {"success": False, "message": "Timeout cannot exceed 600 seconds (10 minutes)"}
+            
+        # Set the timeout
+        if hasattr(persistent_agent, 'max_execution_time'):
+            persistent_agent.max_execution_time = timeout
+            print(f"[API] Agent execution timeout set to {timeout} seconds")
+            return {"success": True, "message": f"Agent timeout set to {timeout} seconds"}
+        else:
+            return {"success": False, "message": "Agent does not support execution timeout"}
+    except Exception as e:
+        return {"success": False, "message": f"Error setting timeout: {str(e)}"}
+    
+@app.get("/api/learning/recommendations")
+async def get_learning_recommendations():
+    """
+    Get learning recommendations based on previously successful command sequences
+    """
+    global persistent_agent
+    
+    if persistent_agent is None:
+        return {"success": False, "message": "No persistent agent exists"}
+        
+    # Check if learning system is available
+    if not hasattr(persistent_agent, 'get_learning_recommendations'):
+        return {"success": False, "message": "Learning system not initialized"}
+        
+    # Get recommendations
+    try:
+        recommendations = persistent_agent.get_learning_recommendations()
+        return {
+            "success": True,
+            "recommendations": recommendations
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error getting recommendations: {str(e)}"
+        }
+        
+@app.post("/api/target/set")
+async def set_target_ip(target_config: TargetConfig):
+    """
+    Set the target IP address for the agent to use in commands instead of localhost
+    """
+    global persistent_agent
+    
+    if persistent_agent is None:
+        return {"success": False, "message": "Agent not initialized"}
+    
+    # Validate IP format
+    ip_pattern = re.compile(r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$')
+    if not ip_pattern.match(target_config.target_ip):
+        return {"success": False, "message": "Invalid IP address format"}
+    
+    # Set the target IP in the agent
+    persistent_agent.set_target_ip(target_config.target_ip)
+    
+    # Also set it as an environment variable
+    os.environ["TARGET_IP"] = target_config.target_ip
+    
+    print(f"[API] Target IP set to {target_config.target_ip}")
+    return {"success": True, "message": f"Target IP set to {target_config.target_ip}"}
+
+@app.post("/api/learning/feedback")
+async def submit_learning_feedback(request: Request):
+    """
+    Submit feedback on command sequence success
+    """
+    global persistent_agent
+    
+    if persistent_agent is None:
+        return {"success": False, "message": "No persistent agent exists"}
+        
+    # Check if learning system is available
+    if not hasattr(persistent_agent, 'learning_system'):
+        return {"success": False, "message": "Learning system not initialized"}
+        
+    try:
+        data = await request.json()
+        success_level = data.get("success_level", 0)  # 0-3 scale
+        outcome = data.get("outcome", "")
+        
+        # Complete current sequence with feedback
+        if persistent_agent.learning_system.current_sequence:
+            sequence = persistent_agent.learning_system.complete_tracking(
+                success_level=success_level,
+                outcome=outcome
+            )
+            return {
+                "success": True,
+                "message": f"Feedback recorded for sequence {sequence.id if sequence else 'unknown'}"
+            }
+        else:
+            return {
+                "success": False,
+                "message": "No active command sequence to provide feedback for"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error processing feedback: {str(e)}"
+        }
+
+@app.get("/api/learning/status")
+async def get_learning_status():
+    """
+    Get learning system status and debug information
+    """
+    global persistent_agent
+    
+    if persistent_agent is None:
+        return {"success": False, "message": "No persistent agent exists"}
+    
+    status = {
+        "agent_exists": persistent_agent is not None,
+        "has_learning_system": hasattr(persistent_agent, 'learning_system'),
+        "learning_system_type": type(persistent_agent.learning_system).__name__ if hasattr(persistent_agent, 'learning_system') else None,
+        "has_current_sequence": False,
+        "current_sequence_info": None,
+        "total_sequences": 0,
+        "successful_sequences": 0
+    }
+    
+    if hasattr(persistent_agent, 'learning_system'):
+        ls = persistent_agent.learning_system
+        status["has_current_sequence"] = hasattr(ls, 'current_sequence') and ls.current_sequence is not None
+        
+        if ls.current_sequence:
+            status["current_sequence_info"] = {
+                "id": ls.current_sequence.id,
+                "name": ls.current_sequence.name,
+                "commands_count": len(ls.current_sequence.commands),
+                "success_level": ls.current_sequence.success_level,
+                "created_at": ls.current_sequence.created_at
+            }
+        
+        # Try to get sequence counts
+        try:
+            status["total_sequences"] = len(ls.sequences)
+            status["successful_sequences"] = len([s for s in ls.sequences.values() if s.success_level >= 2])
+        except:
+            status["sequences_error"] = "Could not access sequences"
+    
+    return {"success": True, "status": status}
+
+@app.post("/api/learning/start_sequence")
+async def start_learning_sequence(request: Request):
+    """
+    Manually start a learning sequence for testing
+    """
+    global persistent_agent
+    
+    if persistent_agent is None:
+        return {"success": False, "message": "No persistent agent exists"}
+        
+    if not hasattr(persistent_agent, 'learning_system'):
+        return {"success": False, "message": "Learning system not initialized"}
+    
+    try:
+        data = await request.json()
+        name = data.get("name", "Test Sequence")
+        description = data.get("description", "Manual test sequence")
+        
+        sequence = persistent_agent.learning_system.start_tracking(
+            name=name,
+            description=description
+        )
+        
+        return {
+            "success": True,
+            "message": f"Started learning sequence: {sequence.id}",
+            "sequence_id": sequence.id
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error starting sequence: {str(e)}"
+        }
+
 @app.post("/api/terminal/output")
 async def submit_terminal_output(output_data: TerminalOutput):
     """
@@ -336,17 +597,66 @@ async def chat_completions(request: ChatRequest):
     # Convert to format expected by the agent
     prompt = request.messages[-1].content  # Take the latest user message as prompt
 
-    # Create the agent with direct SSH command execution capability
-    agent = Darkcircuit_Agent(
-        model_name=request.model,
-        reasoning_prompt=request.reasoner_prompt,
-        response_prompt=request.responder_prompt,
-        ssh_command_runner=run_ssh_command  # Pass our SSH command runner
-    )
-
-    # Store the agent for later reference
-    agent_id = f"agent_{int(time.time())}"
-    active_agents[agent_id] = agent
+    global persistent_agent
+    
+    # Use a single persistent agent for all sessions
+    if persistent_agent is None:
+        print("Creating persistent agent for all sessions")
+        
+        # Load prompts from file to ensure we're using the latest
+        from agent_utils import load_prompts
+        reasoner_prompt, responder_prompt = load_prompts()
+        
+        # Override with provided prompts if present
+        if request.reasoner_prompt:
+            reasoner_prompt = request.reasoner_prompt
+        if request.responder_prompt:
+            responder_prompt = request.responder_prompt
+            
+        # Print the prompts we're using 
+        print(f"Using reasoner prompt: {reasoner_prompt[:100]}...")
+        print(f"Using responder prompt: {responder_prompt[:100]}...")
+        
+        # Create the agent with direct SSH command execution capability
+        persistent_agent = Darkcircuit_Agent(
+            model_name="gpt-4o-mini",  # Switch to more cost-effective model
+            reasoning_prompt=reasoner_prompt,
+            response_prompt=responder_prompt,
+            ssh_command_runner=run_ssh_command  # Pass our SSH command runner
+        )
+        
+        # Add a higher history window to maintain more context
+        persistent_agent.max_history_length = 15  # Increased from 10
+        
+        # Initialize context awareness system once with larger history size
+        context_manager = init_darkcircuit_context(
+            persistent_agent,
+            session_id="persistent_session",
+            persistence_path="./context_data"
+        )
+        
+        # Configure context manager for aggressive command execution
+        if hasattr(context_manager, 'min_category_coverage'):
+            context_manager.min_category_coverage = 4  # Require coverage of at least 4 categories
+            
+        # Initialize and integrate learning system
+        print("[Learning] Initializing learning system...")
+        learning_system = init_learning_system(persistence_path="./learning_data")
+        print(f"[Learning] Learning system created: {type(learning_system)}")
+        
+        integrate_learning_with_agent(persistent_agent, learning_system)
+        print(f"[Learning] Integration complete. Agent has learning system: {hasattr(persistent_agent, 'learning_system')}")
+        
+        if hasattr(persistent_agent, 'learning_system'):
+            print(f"[Learning] Learning system type: {type(persistent_agent.learning_system)}")
+            print(f"[Learning] Current sequence: {persistent_agent.learning_system.current_sequence}")
+        
+        print("[Learning] Initialized learning system for persistent agent")
+    else:
+        print("Using existing persistent agent")
+    
+    # Use the persistent agent
+    agent = persistent_agent
 
     async def generate_stream():
         try:
@@ -400,9 +710,8 @@ async def chat_completions(request: ChatRequest):
             yield f"data: {json.dumps(data)}\n\n"
             yield "data: [DONE]\n\n"
         finally:
-            # Clean up the agent after the conversation is complete
-            if agent_id in active_agents:
-                del active_agents[agent_id]
+            # Don't clean up the persistent agent as we want to keep it around
+            pass
 
     return StreamingResponse(
         generate_stream(),

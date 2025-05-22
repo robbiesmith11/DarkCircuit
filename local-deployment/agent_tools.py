@@ -28,16 +28,19 @@ class AgentTools:
 
     def __init__(self,
                  streaming_handler=None,
-                 ssh_command_runner: Optional[Callable[[str, int], Awaitable[Dict[str, Any]]]] = None):
+                 ssh_command_runner: Optional[Callable[[str, int], Awaitable[Dict[str, Any]]]] = None,
+                 learning_system=None):
         """
         Initialize the agent tools.
 
         Args:
             streaming_handler: The streaming handler for sending events
             ssh_command_runner: Optional function to execute SSH commands directly
+            learning_system: Optional learning system for tracking successful commands
         """
         self.streaming_handler = streaming_handler
         self.ssh_command_runner = ssh_command_runner
+        self.learning_system = learning_system
         self.terminal_command_id = 0
         self.terminal_output_queue = None
 
@@ -88,6 +91,14 @@ class AgentTools:
                     if optimization_message:
                         full_output = f"Note: {optimization_message}\n\n{full_output}"
 
+                    # Track command in learning system if available
+                    if self.learning_system:
+                        try:
+                            self.learning_system.track_command(optimized_command, full_output)
+                            print(f"[Learning] Tracked command: {optimized_command[:50]}...")
+                        except Exception as e:
+                            print(f"[Learning] Error tracking command: {e}")
+
                     return full_output
                 else:
                     return "Command execution failed or returned no results."
@@ -105,7 +116,17 @@ class AgentTools:
 
                 # Wait for output from the frontend
                 if self.terminal_output_queue:
-                    return await wait_for_terminal_output(self.terminal_output_queue, command_id)
+                    output = await wait_for_terminal_output(self.terminal_output_queue, command_id)
+                    
+                    # Track command in learning system if available
+                    if self.learning_system and output:
+                        try:
+                            self.learning_system.track_command(optimized_command, output)
+                            print(f"[Learning] Tracked command: {optimized_command[:50]}...")
+                        except Exception as e:
+                            print(f"[Learning] Error tracking command: {e}")
+                    
+                    return output
                 else:
                     return "Terminal output queue not initialized."
 

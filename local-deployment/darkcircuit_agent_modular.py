@@ -38,7 +38,7 @@ class Darkcircuit_Agent:
     """
 
     def __init__(self,
-                 model_name="gpt-3.5-turbo",  # Default to cheaper model
+                 model_name="gpt-4o-mini",
                  reasoning_prompt=None,
                  response_prompt=None,
                  ssh_command_runner: Optional[Callable[[str, int], Awaitable[Dict[str, Any]]]] = None):
@@ -61,13 +61,15 @@ class Darkcircuit_Agent:
         self.llm = ChatOpenAI(model=model_name, streaming=True, api_key=api_key)
         self.streaming_handler = None
         self.terminal_command_id = 0
-        
-        # Keep track of conversation history
-        self.chat_history = []
-        self.max_history_length = 10  # Keep at 10 messages to ensure sufficient context
 
         # Initialize agent tools
         self.ssh_command_runner = ssh_command_runner
+        
+        # Initialize terminal output queue for frontend communication
+        if not self.ssh_command_runner:
+            self.terminal_output_queue = asyncio.Queue()
+        else:
+            self.terminal_output_queue = None
 
         self.search = DuckDuckGoSearchRun()
 
@@ -81,33 +83,191 @@ class Darkcircuit_Agent:
                 metadata = doc.metadata
                 content_parts.append(f"[Source {i + 1}] {doc.page_content}")
             return "\n\n".join(content_parts)
-            
+
         @tool
-        def rag_retrieve_with_context(query: str) -> str:
-            """
-            [CONTEXT-AWARE RAG] Search for relevant documents using conversation history to improve results.
-            Use this tool for follow-up questions or when the query is related to previous conversation.
-            """
-            from Rag_tool import rag_retrieve_with_history
+        def get_htb_techniques(service_or_situation: str = "") -> str:
+            """Get immediate HTB exploitation techniques and commands for any service or situation"""
             
-            # Extract recent conversation history from the agent's state
-            chat_history = []
-            if hasattr(self, 'chat_history') and self.chat_history:
-                chat_history = self.chat_history
+            techniques = {
+                "ftp": [
+                    "ftp <target_ip> → try anonymous:anonymous login",
+                    "If anonymous access: download all files with 'mget *'",
+                    "Check for writable directories: 'put test.txt' to test uploads",
+                    "Look for config files, user files, .bash_history, id_rsa keys",
+                    "Try common credentials: admin/admin, ftp/ftp, user/user"
+                ],
+                "ssh": [
+                    "Try common credentials: admin/admin, root/root, user/user, guest/guest",
+                    "Try usernames from web/ftp enumeration with passwords: password, 123456, admin",
+                    "Check for SSH keys in web directories: wget http://<target_ip>/id_rsa",
+                    "Look for .ssh directories in FTP or web access",
+                    "Brute force if users found: hydra -l <user> -P /usr/share/wordlists/rockyou.txt ssh://<target_ip>"
+                ],
+                "web": [
+                    "gobuster dir -u http://<target_ip> -w /usr/share/wordlists/dirb/common.txt -x php,html,txt,js",
+                    "Check robots.txt, .htaccess, sitemap.xml, config.php, wp-config.php",
+                    "Try directory traversal: curl http://<target_ip>/page?file=../../../etc/passwd",
+                    "Test file upload: create PHP shell and upload if possible",
+                    "Check source code for credentials, comments, hidden forms",
+                    "Try common paths: /admin, /login, /config, /backup, /uploads",
+                    "Look for databases: phpmyadmin, adminer, database backups"
+                ],
+                "smb": [
+                    "smbclient -L <target_ip> → list shares (try null session)",
+                    "smbclient //<target_ip>/share → connect to shares",
+                    "enum4linux <target_ip> → enumerate users/groups/shares",
+                    "Try guest access: smbclient //<target_ip>/share -U guest",
+                    "Download everything: smbget -R smb://<target_ip>/share",
+                    "Look for sensitive files: passwords.txt, config files, scripts"
+                ],
+                "flags": [
+                    "find / -name 'user.txt' 2>/dev/null | head -5",
+                    "find / -name 'root.txt' 2>/dev/null | head -5",
+                    "find / -name '*flag*' 2>/dev/null | head -10",
+                    "cat /root/root.txt 2>/dev/null || echo 'Need root access'",
+                    "find /home -name 'user.txt' 2>/dev/null | xargs cat 2>/dev/null",
+                    "find /var/www -name '*flag*' -o -name '*user*' -o -name '*root*' 2>/dev/null",
+                    "grep -r 'HTB{' /var/www/ 2>/dev/null | head -5",
+                    "find /opt -name '*flag*' 2>/dev/null"
+                ],
+                "privilege_escalation": [
+                    "sudo -l → check sudo permissions",
+                    "find / -perm -4000 2>/dev/null → SUID binaries",
+                    "cat /etc/crontab → check cron jobs",
+                    "ps aux → check running processes as root",
+                    "netstat -tulpn → check listening services",
+                    "cat /etc/passwd → enumerate users",
+                    "ls -la /home → check user directories",
+                    "find / -writable 2>/dev/null | grep -v proc | head -10",
+                    "getcap -r / 2>/dev/null → check capabilities",
+                    "cat /etc/crontab /etc/cron*/* 2>/dev/null | grep -v '#'"
+                ],
+                "reconnaissance": [
+                    "nmap -p- --min-rate 10000 <target_ip>",
+                    "nmap -sV -sC -p <ports> <target_ip>",
+                    "nmap -sU --top-ports 100 <target_ip> (UDP scan)",
+                    "whatweb <target_ip> (web technology detection)",
+                    "nmap --script vuln -p <ports> <target_ip> (vulnerability scan)"
+                ],
+                "enumeration": [
+                    "ls -la → check current directory permissions",
+                    "whoami → current user",
+                    "id → current user privileges",
+                    "uname -a → system information",
+                    "cat /etc/os-release → OS version",
+                    "ps aux → running processes",
+                    "netstat -tulpn → network connections",
+                    "mount → mounted filesystems"
+                ]
+            }
             
-            # Use the history-aware retriever
-            result = rag_retrieve_with_history(
-                query=query, 
-                chat_history=chat_history,
-                model_name="gpt-4o-mini"  # Using cost-effective model for RAG results
-            )
+            # Match service or situation
+            service_lower = service_or_situation.lower()
+            matched_techniques = []
             
-            # Add a clear indicator at the beginning of the response
-            return "🧠 [CONTEXT-AWARE SEARCH RESULTS] Using conversation history to enhance retrieval:\n\n" + result
+            for category, commands in techniques.items():
+                if category in service_lower or any(keyword in service_lower for keyword in category.split()):
+                    matched_techniques.extend([f"🔥 {category.upper()}: {cmd}" for cmd in commands])
+            
+            # If no specific match, provide aggressive starting techniques
+            if not matched_techniques:
+                matched_techniques = [
+                    "🚀 AGGRESSIVE START - EXECUTE ALL IMMEDIATELY:",
+                    "• nmap -p- --min-rate 10000 <target_ip>",
+                    "• nmap -sV -sC -p <discovered_ports> <target_ip>",
+                    "• gobuster dir -u http://<target_ip> -w /usr/share/wordlists/dirb/common.txt -x php,txt,html",
+                    "• ftp <target_ip> (try anonymous login)",
+                    "• smbclient -L <target_ip>",
+                    "• find / -name 'user.txt' 2>/dev/null",
+                    "• find / -name 'root.txt' 2>/dev/null",
+                    "• Try common web paths: /admin /login /config /backup"
+                ]
+            
+            # Always add flag hunting section
+            matched_techniques.extend([
+                "",
+                "🏁 IMMEDIATE FLAG HUNTING - RUN ALL:",
+                "• find / -name 'user.txt' 2>/dev/null | xargs cat 2>/dev/null",
+                "• find / -name 'root.txt' 2>/dev/null | xargs cat 2>/dev/null", 
+                "• find / -name '*flag*' 2>/dev/null | head -10",
+                "• find /var/www /home /opt -name '*flag*' -o -name '*user*' -o -name '*root*' 2>/dev/null",
+                "• grep -r 'HTB{' /var/www/ /home/ 2>/dev/null | head -5",
+                "",
+                "🎯 PERSISTENCE STRATEGY:",
+                "• Keep trying different attack vectors simultaneously",
+                "• If one service blocked, immediately pivot to others",
+                "• Always check for flags after each successful step",
+                "• Don't stop until both user.txt and root.txt are found"
+            ])
+            
+            return "\n".join(matched_techniques)
+
+        @tool
+        async def auto_enumerate(self, target_ip: str) -> str:
+            """Automatically perform aggressive enumeration on target IP - runs multiple scans in parallel"""
+            
+            commands_to_run = [
+                f"nmap -p- --min-rate 10000 {target_ip}",
+                f"ftp {target_ip} <<< 'anonymous\nanonymous\nls\nquit'",
+                f"smbclient -L {target_ip} -N",
+                f"curl -s http://{target_ip}/robots.txt",
+                f"curl -s http://{target_ip} | grep -i 'login\\|admin\\|config'",
+                "find / -name 'user.txt' 2>/dev/null | head -3",
+                "find / -name 'root.txt' 2>/dev/null | head -3"
+            ]
+            
+            results = []
+            for cmd in commands_to_run:
+                try:
+                    # Execute each enumeration command
+                    result = await self.run_command.ainvoke(cmd)
+                    results.append(f"[CMD: {cmd}]\n{result}\n")
+                except Exception as e:
+                    results.append(f"[CMD: {cmd}]\nError: {str(e)}\n")
+            
+            combined_results = "\n".join(results)
+            return f"🔍 AGGRESSIVE AUTO-ENUMERATION RESULTS:\n\n{combined_results}\n\n🎯 NEXT: Analyze results and immediately exploit discovered services!"
+
+        @tool
+        async def hunt_flags(self) -> str:
+            """Aggressively hunt for flags in common locations"""
+            
+            flag_commands = [
+                "find / -name 'user.txt' 2>/dev/null | xargs cat 2>/dev/null",
+                "find / -name 'root.txt' 2>/dev/null | xargs cat 2>/dev/null", 
+                "find / -name '*flag*' 2>/dev/null | head -10",
+                "find /var/www -name '*flag*' -o -name '*user*' -o -name '*root*' 2>/dev/null",
+                "find /home -name '*flag*' -o -name 'user.txt' 2>/dev/null | xargs cat 2>/dev/null",
+                "grep -r 'HTB{' /var/www/ /home/ /opt/ 2>/dev/null | head -5",
+                "find /opt /srv /tmp -name '*flag*' -o -name '*user*' -o -name '*root*' 2>/dev/null"
+            ]
+            
+            results = []
+            flags_found = []
+            
+            for cmd in flag_commands:
+                try:
+                    result = await self.run_command.ainvoke(cmd)
+                    results.append(f"[{cmd}]\n{result}\n")
+                    
+                    # Check if we found actual flags
+                    if 'HTB{' in result or ('.txt' in result and len(result.strip()) > 0 and 'No such file' not in result):
+                        flags_found.append(result.strip())
+                        
+                except Exception as e:
+                    results.append(f"[{cmd}]\nError: {str(e)}\n")
+            
+            combined_results = "\n".join(results)
+            
+            if flags_found:
+                flag_summary = "\n".join(flags_found)
+                return f"🏆 FLAG HUNTING RESULTS - FLAGS FOUND! 🏆\n\n{flag_summary}\n\nFull Results:\n{combined_results}"
+            else:
+                return f"🔍 FLAG HUNTING RESULTS - No flags found yet, keep exploiting!\n\n{combined_results}\n\n💡 TIP: Try different privilege escalation techniques!"
 
         @tool
         async def run_command(command: str) -> str:
-            """Execute a command on the remote SSH server."""
+            """Execute a command on the remote SSH server (HTB Pwnbox environment)."""
             from agent_utils import optimize_command, wait_for_terminal_output
 
             try:
@@ -117,6 +277,18 @@ class Darkcircuit_Agent:
 
                 # Optimize the command if possible
                 optimized_command, optimization_message = optimize_command(command)
+                
+                # Add context reminder and flag detection for all commands
+                context_reminder = "\n[CONTEXT: You are on HTB Pwnbox executing commands against the target machine]"
+                
+                # Add flag hunting suggestion based on command type
+                flag_hunting_hint = ""
+                if any(cmd in optimized_command.lower() for cmd in ['ls', 'cat', 'find', 'grep', 'cd']):
+                    flag_hunting_hint = "\n[HINT: After exploring, run: find / -name 'user.txt' -o -name 'root.txt' 2>/dev/null | xargs cat 2>/dev/null]"
+                elif any(cmd in optimized_command.lower() for cmd in ['wget', 'curl', 'ftp', 'smbclient']):
+                    flag_hunting_hint = "\n[HINT: After downloading files, check them for flags or credentials]"
+                elif 'nmap' in optimized_command.lower():
+                    flag_hunting_hint = "\n[HINT: After port scan, immediately test each service found]"
 
                 # If we have a direct SSH command runner, use it
                 if self.ssh_command_runner:
@@ -137,13 +309,38 @@ class Darkcircuit_Agent:
                     if result and "success" in result:
                         output = result.get("output", "")
 
-                        # If there was an optimization, prepend that information
-                        # if optimization_message:
-                        #    output = f"Note: {optimization_message}\n\n{output}"
+                        # Add optimization message if present
+                        if optimization_message:
+                            output = f"Note: {optimization_message}\n\n{output}"
+
+                        # Add context reminder and flag hunting hints
+                        output += context_reminder + flag_hunting_hint
+                        
+                        # Auto-detect potential flags in output
+                        if 'HTB{' in output or 'user.txt' in output or 'root.txt' in output:
+                            output += "\n\n🏆 POTENTIAL FLAG DETECTED IN OUTPUT! 🏆\n"
+
+                        # Track command in learning system if available
+                        if hasattr(self, 'learning_system') and self.learning_system:
+                            try:
+                                self.learning_system.track_command(optimized_command, output)
+                                print(f"[Learning] Tracked command: {optimized_command[:50]}...")
+                            except Exception as e:
+                                print(f"[Learning] Error tracking command: {e}")
 
                         return output
                     else:
-                        return "Command execution failed or returned no results."
+                        failure_msg = "Command execution failed or returned no results."
+                        
+                        # Track failed command in learning system if available
+                        if hasattr(self, 'learning_system') and self.learning_system:
+                            try:
+                                self.learning_system.track_command(optimized_command, failure_msg, success=False)
+                                print(f"[Learning] Tracked failed command: {optimized_command[:50]}...")
+                            except Exception as e:
+                                print(f"[Learning] Error tracking failed command: {e}")
+                        
+                        return failure_msg
                 else:
                     # Fallback to the old method using the frontend
                     print(
@@ -159,7 +356,28 @@ class Darkcircuit_Agent:
 
                     # Wait for output from the frontend
                     if self.terminal_output_queue:
-                        return await wait_for_terminal_output(self.terminal_output_queue, command_id)
+                        output = await wait_for_terminal_output(self.terminal_output_queue, command_id)
+                        
+                        # Add optimization message if present
+                        if optimization_message:
+                            output = f"Note: {optimization_message}\n\n{output}"
+
+                        # Add context reminder and flag hunting hints
+                        output += context_reminder + flag_hunting_hint
+                        
+                        # Auto-detect potential flags in output
+                        if 'HTB{' in output or 'user.txt' in output or 'root.txt' in output:
+                            output += "\n\n🏆 POTENTIAL FLAG DETECTED IN OUTPUT! 🏆\n"
+                        
+                        # Track command in learning system if available
+                        if hasattr(self, 'learning_system') and self.learning_system and output:
+                            try:
+                                self.learning_system.track_command(optimized_command, output)
+                                print(f"[Learning] Tracked frontend command: {optimized_command[:50]}...")
+                            except Exception as e:
+                                print(f"[Learning] Error tracking frontend command: {e}")
+                        
+                        return output
                     else:
                         return "Terminal output queue not initialized."
 
@@ -168,8 +386,8 @@ class Darkcircuit_Agent:
 
         self.run_command = run_command
         self.rag_retrieve = rag_retrieve
-        self.rag_retrieve_with_context = rag_retrieve_with_context
-        self.tools = [self.search, self.run_command, self.rag_retrieve, self.rag_retrieve_with_context]
+        self.get_htb_techniques = get_htb_techniques
+        self.tools = [self.search, self.run_command, self.rag_retrieve, self.get_htb_techniques]
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
         # Load default prompts from file or use hardcoded defaults
@@ -178,6 +396,11 @@ class Darkcircuit_Agent:
         # Create system messages
         self.reasoning_prompt = SystemMessage(content=reasoning_prompt or DEFAULT_REASONING_PROMPT)
         self.response_prompt = SystemMessage(content=response_prompt or DEFAULT_RESPONSE_PROMPT)
+        
+        # Preload RAG system during agent initialization for faster response times
+        print("🔄 Initializing RAG system for instant responses...")
+        from Rag_tool import preload_rag_system
+        preload_rag_system()
 
     def _build_agent_graph(self):
         """Set up the LangGraph for agent reasoning."""
@@ -230,9 +453,14 @@ class Darkcircuit_Agent:
             # When preparing messages for the reasoner, include the original user query
             # and system messages, but convert tool messages to system messages
             filtered_messages = []
+            has_htb_request = False
+            
             for msg in state["messages"]:
                 if isinstance(msg, (HumanMessage, SystemMessage)):
                     filtered_messages.append(msg)
+                    # Check if this is an HTB challenge request
+                    if isinstance(msg, HumanMessage) and any(keyword in msg.content.lower() for keyword in ['htb', 'hack the box', 'target', 'machine', 'challenge', 'dancing', 'meow', 'fawn', 'explosion']):
+                        has_htb_request = True
                 elif isinstance(msg, ToolMessage):
                     # Convert tool messages to system messages to preserve their content
                     tool_name = getattr(msg, "name", "tool")
@@ -241,11 +469,28 @@ class Darkcircuit_Agent:
                     filtered_messages.append(system_msg)
                 elif getattr(msg, "type", "") in ["human", "system"]:
                     filtered_messages.append(msg)
+                    if getattr(msg, "type", "") == "human" and any(keyword in msg.content.lower() for keyword in ['htb', 'hack the box', 'target', 'machine', 'challenge', 'dancing', 'meow', 'fawn', 'explosion']):
+                        has_htb_request = True
                 elif getattr(msg, "type", "") == "tool":
                     tool_name = getattr(msg, "name", "tool")
                     tool_content = getattr(msg, "content", "")
                     system_msg = SystemMessage(content=f"Tool result from {tool_name}: {tool_content}")
                     filtered_messages.append(system_msg)
+            
+            # If this looks like an HTB challenge, inject aggressive action guidance
+            if has_htb_request:
+                if len(state["messages"]) < 5:
+                    # Initial aggressive push
+                    action_boost = SystemMessage(content="🚨 IMMEDIATE ACTION REQUIRED: This is an HTB challenge. Start MULTIPLE reconnaissance approaches NOW - don't overthink, execute in parallel: 1) nmap -p- --min-rate 10000 <target_ip> 2) If web services found, immediately run gobuster 3) Try FTP anonymous login 4) Check SMB shares 5) Hunt for flags constantly")
+                    filtered_messages.append(action_boost)
+                elif len(state["messages"]) < 15:
+                    # Mid-challenge persistence boost
+                    persistence_boost = SystemMessage(content="🔄 PERSISTENCE MODE: You should be aggressively trying multiple attack vectors. If stuck on one service, immediately pivot to others. ALWAYS check for flags after any successful access. Keep the pressure up!")
+                    filtered_messages.append(persistence_boost)
+                
+                # Always add flag hunting reminder
+                flag_reminder = SystemMessage(content="FLAG HUNTING: After EVERY successful command, immediately run: find / -name 'user.txt' 2>/dev/null | xargs cat 2>/dev/null && find / -name 'root.txt' 2>/dev/null | xargs cat 2>/dev/null")
+                filtered_messages.append(flag_reminder)
 
             # If no messages after filtering, check for the original human message
             if not filtered_messages:
@@ -254,59 +499,8 @@ class Darkcircuit_Agent:
                         filtered_messages.append(msg)
                         break
 
-            # Enhance with learning recommendations if available
-            reasoning_prompt_content = self.reasoning_prompt.content
-            
-            # Add learning recommendations if available
-            if hasattr(self, 'get_learning_recommendations'):
-                try:
-                    recommendations = self.get_learning_recommendations()
-                    
-                    # Create an addition to the prompt with learned techniques
-                    learned_techniques = []
-                    
-                    # Add flag techniques
-                    if recommendations.get("flag_techniques"):
-                        techniques = recommendations["flag_techniques"]
-                        learned_techniques.append("PREVIOUSLY SUCCESSFUL FLAG-FINDING TECHNIQUES:")
-                        for i, technique in enumerate(techniques):
-                            description = technique.get("description", "")
-                            key_commands = technique.get("key_commands", [])
-                            learned_techniques.append(f"{i+1}. {description}")
-                            if key_commands:
-                                learned_techniques.append("   Key commands:")
-                                for cmd in key_commands:
-                                    learned_techniques.append(f"   - {cmd}")
-                                    
-                    # Add recommended next steps
-                    if recommendations.get("next_steps"):
-                        next_steps = recommendations["next_steps"]
-                        if next_steps:
-                            learned_techniques.append("\nRECOMMENDED NEXT COMMANDS:")
-                            for i, cmd in enumerate(next_steps):
-                                learned_techniques.append(f"{i+1}. {cmd}")
-                    
-                    # Add similar commands that worked before
-                    if recommendations.get("similar_commands"):
-                        similar_commands = recommendations["similar_commands"]
-                        if similar_commands:
-                            learned_techniques.append("\nSIMILAR COMMANDS THAT WORKED BEFORE:")
-                            for i, cmd in enumerate(similar_commands):
-                                learned_techniques.append(f"{i+1}. {cmd}")
-                    
-                    # Only add to prompt if we have recommendations
-                    if learned_techniques:
-                        learning_addition = "\n\n# LEARNED FROM PREVIOUS SUCCESSES\n" + "\n".join(learned_techniques)
-                        reasoning_prompt_content += learning_addition
-                        print(f"[Agent] Enhanced prompt with {len(learned_techniques)} learned techniques")
-                except Exception as e:
-                    print(f"[Agent] Error enhancing prompt with learning: {e}")
-            
-            # Create an enhanced system message with learning
-            enhanced_system_prompt = SystemMessage(content=reasoning_prompt_content)
-            
             # Add the system prompt
-            messages_to_send = [enhanced_system_prompt] + filtered_messages
+            messages_to_send = [self.reasoning_prompt] + filtered_messages
 
             # Log what we're sending
             print(f"[Agent] Reasoner sending {len(messages_to_send)} messages")
@@ -327,80 +521,16 @@ class Darkcircuit_Agent:
             result_text = getattr(result, "content", "").strip().lower()
             print(f"[Agent] Reasoner result preview: {result_text[:100]}...")
 
-            # Count how many commands were run by looking at tool calls in the history
-            command_count = 0
-            for msg in state["messages"]:
-                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                    for tool_call in msg.tool_calls:
-                        if tool_call.get('name') == 'run_command':
-                            command_count += 1
-            
-            # Custom logic for determining done status
-            # Only stop if we explicitly see the ready signal AND have run enough commands
-            # or if we've run a very high number of commands (prevent infinite loops)
+            # Original simple logic - determine if we're done based on the magic phrase
             done = "[ready to answer]" in result_text
-            
-            # If in HTB/security context, enforce minimum command count
-            is_security_context = any(term in result_text.lower() for term in 
-                                    ["hack the box", "htb", "exploit", "nmap", "vulnerability", 
-                                     "security", "ssh", "brute force", "password"]) or \
-                               any(term.lower() in self.last_query.lower() if hasattr(self, 'last_query') and self.last_query else False 
-                                   for term in ["hack the box", "htb", "exploit", "flag", "challenge", "lab", "target"])
-            
-            # Check for flag patterns in the entire conversation history
-            has_flag = False
-            for msg in state["messages"]:
-                content = getattr(msg, "content", "").lower()
-                if any(pattern in content for pattern in ["[flag", "flag:", "htb{", "root:", "user:", "flag{"]) and \
-                   any(indicator in content for indicator in ["found", "discovered", "got", "here", "is"]):  
-                    has_flag = True
-                    break
-            
-            # Higher command count minimum for security context
-            REQUIRED_COMMANDS = 20 if is_security_context else 10
-            
-            # Enforce strict minimum command count for security contexts
-            if is_security_context and command_count < REQUIRED_COMMANDS and not has_flag:
-                # Force continued execution if not enough commands have been tried
-                force_execution = True
-                done = False
-                print(f"[Agent] Only {command_count}/{REQUIRED_COMMANDS} required commands executed, continuing execution")
-            
-            # In security contexts, NEVER stop unless flag found or very high command count
-            if is_security_context and not has_flag and command_count < 50:  # Absolute upper limit is 50 commands
-                done = False  # Keep going until we find the flag
-                print(f"[Agent] Security context detected and flag not found. Continuing regardless of ready signal.")
-            
-            # If we don't see tool calls in the result, but we're not done, check if the model is just thinking
-            if not done and not hasattr(result, "tool_calls") and "[ready to answer]" not in result_text and is_security_context:
-                # Check the text for indicators it's asking for permission or planning next steps
-                if any(phrase in result_text for phrase in ["should i", "shall i", "would you", "do you want", "next step", "proceed"]):
-                    # Enforce tool usage rather than thinking by overriding the result
-                    # Create a default command to force execution
-                    print(f"[Agent] Detected planning without action. Forcing command execution.")
-                    
-                    # Determine a good default command based on context
-                    default_cmd = "whoami && pwd && ls -la"
-                    if "web" in result_text or "http" in result_text:
-                        default_cmd = "curl -v http://localhost/ || curl -v http://127.0.0.1/"
-                    elif "port" in result_text or "scan" in result_text:
-                        default_cmd = "nmap -p- --min-rate 5000 -T4 127.0.0.1 || nmap -p- --min-rate 5000 -T4 localhost"
-                    
-                    # Create a tool call to force execution
-                    from langchain_core.messages import AIMessage
-                    result = AIMessage(
-                        content="I'll run a command to gather more information.",
-                        tool_calls=[{"name": "run_command", "args": {"command": default_cmd}}]
-                    )
-                    done = False
-            
             print(f"[Agent] Done status: {done}")
+            
+            # Update the state with filtered messages and the result
+            new_messages = filtered_messages + [result]
 
             # Flush the thinking buffer to send consolidated thinking content
             await self.streaming_handler._flush_thinking_buffer(done)
 
-            # Update the state with filtered messages and the result
-            new_messages = filtered_messages + [result]
             return {**state, "messages": new_messages, "done": done}
 
         except Exception as e:
@@ -640,61 +770,14 @@ class Darkcircuit_Agent:
         """
         print(f"[Agent] Routing from reasoner. Done: {state.get('done')}")
 
-        # Get last message content for context
-        last_message = state["messages"][-1] if state["messages"] else None
-        message_content = getattr(last_message, "content", "").lower() if last_message else ""
-        has_tool_calls = hasattr(last_message, "tool_calls") and last_message.tool_calls
-
-        # Check for questions about whether to proceed
-        asks_to_proceed = any(phrase in message_content for phrase in 
-                           ["shall we proceed", "should we proceed", "would you like to proceed", 
-                            "do you want me to", "should i proceed", "shall i proceed", "let me know", 
-                            "what would you like", "next step", "would you like", "how should i"])
-
-        # Is this a security context?
-        is_security_context = False
-        for msg in state["messages"]:
-            content = getattr(msg, "content", "").lower()
-            if any(term in content for term in ["hack the box", "htb", "exploit", "vulnerability", 
-                                             "security", "ssh", "brute force", "password", "flag", "ctf"]):
-                is_security_context = True
-                break
-
-        # If asking for permission to continue OR in security context and not making progress, force execution
-        force_execution = asks_to_proceed or (
-            is_security_context and 
-            not has_tool_calls and 
-            not state.get('done', False) and
-            "[ready to answer]" not in message_content
-        )
-            
-        if force_execution:
-            print(f"[Agent] Detected need for forced execution - automatically running command")
-            # Force execution to continue by routing to tools node
-            if not has_tool_calls:
-                # Create a dummy tool call message to force execution
-                from langchain_core.messages import AIMessage
-                
-                # Determine a good default command based on context
-                default_cmd = "whoami && pwd && ls -la"
-                if "web" in message_content or "http" in message_content:
-                    default_cmd = "curl -v http://localhost/ || curl -v http://127.0.0.1/"
-                elif "port" in message_content or "scan" in message_content:
-                    default_cmd = "nmap -p- --min-rate 5000 -T4 127.0.0.1 || nmap -p- --min-rate 5000 -T4 localhost"
-                
-                tool_msg = AIMessage(
-                    content="Let's proceed with further enumeration and exploitation",
-                    tool_calls=[{"name": "run_command", "args": {"command": default_cmd}}]
-                )
-                state["messages"].append(tool_msg)
-                state["done"] = False
-                return "tools"
-
         # If there was an error or we're explicitly done, go to responder
         if state.get('done', False):
             return "responder"
 
         # Check if the last message contains tool calls
+        last_message = state["messages"][-1] if state["messages"] else None
+        has_tool_calls = hasattr(last_message, "tool_calls") and last_message.tool_calls
+
         if has_tool_calls:
             return "tools"  # Process tool calls
         else:
@@ -711,18 +794,7 @@ class Darkcircuit_Agent:
         Yields:
             dict: Event objects for streaming (tokens, thinking, tool calls, etc.)
         """
-        # Store the last user query for context detection
-        self.last_query = prompt
-        
-        # Add user message to chat history
-        user_message = HumanMessage(content=prompt)
-        self.chat_history.append(user_message)
-        
-        # Maintain a fixed size history window
-        if len(self.chat_history) > self.max_history_length:
-            self.chat_history = self.chat_history[-self.max_history_length:]
-        
-        input_messages = [user_message]
+        input_messages = [HumanMessage(content=prompt)]
 
         # Initialize streaming handler
         self.streaming_handler = StreamingHandler(output_target="debug")
@@ -732,26 +804,12 @@ class Darkcircuit_Agent:
 
         async def run_graph():
             print("[Agent] Starting graph execution")
-            result = await self.react_graph.ainvoke(
+            await self.react_graph.ainvoke(
                 {"messages": input_messages},
                 config={"callbacks": [self.streaming_handler]}
             )
             await self.streaming_handler.end()
             print("[Agent] Graph execution complete")
-            
-            # Extract the AI's final answer to add to chat history
-            if result and "messages" in result:
-                final_messages = result["messages"]
-                if final_messages and len(final_messages) > 0:
-                    last_message = final_messages[-1]
-                    if hasattr(last_message, "content") and not isinstance(last_message, HumanMessage):
-                        # Add AI message to chat history
-                        ai_message = AIMessage(content=last_message.content)
-                        self.chat_history.append(ai_message)
-                        
-                        # Maintain a fixed size history window
-                        if len(self.chat_history) > self.max_history_length:
-                            self.chat_history = self.chat_history[-self.max_history_length:]
 
         graph_task = asyncio.create_task(run_graph())
 

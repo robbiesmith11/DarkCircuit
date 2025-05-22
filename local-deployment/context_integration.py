@@ -830,34 +830,87 @@ def integrate_with_darkcircuit_agent(agent, context_manager: ContextManager):
     
     if original_run_command:
         async def enhanced_run_command(command: str) -> str:
-            # Only prevent exact duplicate commands, allow variations
-            exact_match = command in context_manager.executed_commands
+            # Track if command is substantially similar to previous commands, not just exact matches
+            # This prevents getting stuck executing nearly identical commands
             
-            # But allow common commands to be repeated occasionally based on context
+            # First check for exact match
+            exact_match = command in context_manager.executed_commands
+            similar_match = False
+            
+            # Check for very similar commands that differ only in minor ways
+            # This helps prevent getting stuck with commands like 'ls' vs 'ls -a' vs 'ls -la'
+            if not exact_match:
+                # Extract base command
+                base_cmd = command.strip().split()[0] if command.strip() else ""
+                
+                # Check the command history for potential similar commands
+                similar_commands = []
+                for executed_cmd in context_manager.executed_commands:
+                    if executed_cmd.startswith(base_cmd):
+                        similar_commands.append(executed_cmd)
+                
+                # If we've already run 3+ variations of this base command, consider it similar
+                if len(similar_commands) >= 3:
+                    similar_match = True
+                    print(f"[Context] Found {len(similar_commands)} similar commands using '{base_cmd}'")
+                    
+            # But allow certain commands to be repeated occasionally based on context
             allow_repeat = False
             
-            # Always allow these basic commands to repeat
+            # Always allow these basic commands to repeat unconditionally
             basic_repeatable_commands = ["ls", "ls -la", "pwd", "whoami", "id", "cat /etc/passwd", "ps aux"]
             if any(command.strip() == basic for basic in basic_repeatable_commands):
                 allow_repeat = True
+                
+            # Critical security commands that should always be allowed to run
+            critical_commands = ["curl", "wget", "nmap", "gobuster", "dirb", "hydra", "ssh", "nc"]
+            if any(command.strip().startswith(critical) for critical in critical_commands):
+                allow_repeat = True
             
-            # Check if we have too few total commands - if so, permit some repetition 
+            # Check if we have too few total commands - if so, permit repetition 
             # to ensure continued execution
             if len(context_manager.executed_commands) < 15:
                 allow_repeat = True
+                
+            # Encourage command category diversity - allow repeat if we haven't tried many categories yet
+            if len(context_manager.command_categories.get("reconnaissance", set())) < 2 or \
+               len(context_manager.command_categories.get("web", set())) < 2 or \
+               len(context_manager.command_categories.get("enumeration", set())) < 2:
+                allow_repeat = True
             
             # Check if we've already run this command but don't block progression
-            if exact_match and not allow_repeat:
-                print(f"[Context] Detected repeated command: {command}")
-                if command in context_manager.command_results:
-                    print(f"[Context] Returning cached result")
+            if (exact_match or similar_match) and not allow_repeat:
+                print(f"[Context] Detected {'exact' if exact_match else 'similar'} repeated command: {command}")
+                
+                # For exact matches only, we can use the cached result
+                if exact_match and command in context_manager.command_results:
+                    print(f"[Context] Returning cached result and suggesting alternatives")
+                    
                     # Handle different result formats
                     if isinstance(context_manager.command_results[command], dict) and "result" in context_manager.command_results[command]:
                         cached_result = context_manager.command_results[command]["result"]
                     else:
                         cached_result = context_manager.command_results[command]
-                        
-                    return f"[CACHED RESULT] This command was already executed. Previous result:\n\n{cached_result}"
+                    
+                    # Suggest alternative commands based on command type
+                    alternatives = []
+                    base_cmd = command.strip().split()[0] if command.strip() else ""
+                    
+                    if base_cmd in ["ls", "dir"]:
+                        alternatives = ["find / -type f -name \"*.txt\" 2>/dev/null", "find / -type f -perm -4000 2>/dev/null", "find / -writable 2>/dev/null"]
+                    elif base_cmd in ["cat", "more", "less"]:
+                        alternatives = ["grep -r \"password\" /etc 2>/dev/null", "grep -r \"config\" /etc 2>/dev/null", "strings [FILENAME]"]
+                    elif base_cmd == "nmap":
+                        alternatives = ["nmap -p- -T4 [IP]", "nmap -sV -sC [IP]", "nmap -A [IP]"]
+                    elif base_cmd in ["curl", "wget"]:
+                        alternatives = ["curl -X POST [URL]", "curl -H \"Content-Type: application/json\" [URL]", "gobuster dir -u [URL] -w /usr/share/wordlists/dirb/common.txt"]
+                    
+                    # Add alternative suggestions to the result
+                    suggestion = ""
+                    if alternatives:
+                        suggestion = "\n\nTry these alternative commands instead:\n" + "\n".join([f"- {alt}" for alt in alternatives])
+                    
+                    return f"[CACHED RESULT] This command was already executed. Previous result:\n\n{cached_result}{suggestion}"
             
             # Execute the command
             result = await original_run_command(command)
@@ -877,25 +930,57 @@ def integrate_with_darkcircuit_agent(agent, context_manager: ContextManager):
                         context_manager.command_execution_rate = (commands_count / time_span) * 60  # convert to per minute
             
             # Categorize the command to track coverage
+            # Extract base command for categorization
+            base_cmd = command.strip().split()[0] if command.strip() else ""
+            
+            # Initialize to track if we've categorized the command
             categorized = False
-            if any(cmd in command.lower() for cmd in ["nmap", "ping", "traceroute", "host", "dig", "whois"]):
+            
+            # Reconnaissance commands
+            if base_cmd in ["nmap", "ping", "traceroute", "host", "dig", "whois", "dnsenum"] or \
+               any(term in command.lower() for term in ["scan", "recon", "enum"]):
                 context_manager.command_categories["reconnaissance"].add(command)
                 categorized = True
-            if any(cmd in command.lower() for cmd in ["ls", "find", "locate", "cat", "grep", "dir", "type"]):
+                
+            # Enumeration and file system commands    
+            if base_cmd in ["ls", "find", "locate", "cat", "grep", "dir", "type", "more", "less"] or \
+               "find" in command:
                 context_manager.command_categories["enumeration"].add(command)
                 categorized = True
-            if any(cmd in command.lower() for cmd in ["curl", "wget", "http", "dirb", "gobuster", "nikto", "browser"]):
+                
+            # Web related commands
+            if base_cmd in ["curl", "wget", "dirb", "gobuster", "nikto", "wfuzz"] or \
+               any(term in command.lower() for term in ["http", "web", "port 80", "port 443"]):
                 context_manager.command_categories["web"].add(command)
                 categorized = True
-            if any(cmd in command.lower() for cmd in ["exploit", "nc", "netcat", "rev", "shell", "msfconsole", "msf"]):
+                
+            # Exploitation commands
+            if base_cmd in ["nc", "netcat", "msf", "msfconsole", "python", "perl", "php", "bash"] or \
+               any(term in command.lower() for term in ["exploit", "shell", "reverse", "payload"]):
                 context_manager.command_categories["exploitation"].add(command)
                 categorized = True
-            if any(cmd in command.lower() for cmd in ["sudo", "su", "chmod", "chown", "setuid", "suid", "root"]):
+                
+            # Privilege escalation commands 
+            if base_cmd in ["sudo", "su", "chmod", "chown"] or \
+               any(term in command.lower() for term in ["setuid", "suid", "root", "administrator", "admin"]):
                 context_manager.command_categories["privilege_escalation"].add(command)
                 categorized = True
-            if any(cmd in command.lower() for cmd in ["hydra", "john", "hashcat", "crack", "brute", "password"]):
+                
+            # Brute force and password cracking
+            if base_cmd in ["hydra", "john", "hashcat", "medusa"] or \
+               any(term in command.lower() for term in ["crack", "brute", "password", "wordlist"]):
                 context_manager.command_categories["brute_force"].add(command)
                 categorized = True
+                
+            # Network and service enumeration  
+            if base_cmd in ["netstat", "ss", "lsof", "nc"] or "port" in command:
+                # Add a new category for network commands
+                if "network" not in context_manager.command_categories:
+                    context_manager.command_categories["network"] = set()
+                context_manager.command_categories["network"].add(command)
+                categorized = True
+            
+            # Catchall for uncategorized commands    
             if not categorized:
                 context_manager.command_categories["other"].add(command)
             

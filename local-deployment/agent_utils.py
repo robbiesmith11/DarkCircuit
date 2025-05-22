@@ -9,7 +9,8 @@ import os
 import asyncio
 import json
 import time
-from typing import Dict, Any, Optional
+import re
+from typing import Dict, Any, Optional, Tuple
 
 
 def load_prompts():
@@ -97,28 +98,117 @@ async def wait_for_terminal_output(queue, command_id, timeout=1200):
     return f"Command timed out after {timeout} seconds"
 
 
-def optimize_command(command: str) -> (str, Optional[str]):
+def sanitize_command(command: str) -> Tuple[str, Optional[str]]:
     """
-    Optimize potentially slow commands.
+    Sanitize commands to prevent targeting localhost or the user's own system.
+    Also provide context awareness for HTB environment.
     
     Args:
-        command (str): The command to optimize
+        command (str): The command to sanitize
         
     Returns:
-        tuple: (optimized_command, optimization_message)
+        tuple: (sanitized_command, sanitization_message)
     """
+    sanitization_message = None
+    original_command = command
+    
+    # Patterns to identify localhost targeting
+    localhost_patterns = [
+        r'(^|\s)(localhost)(\s|$|:|/)',
+        r'(^|\s)(127\.0\.0\.1)(\s|$|:|/)',
+        r'(^|\s)(::1)(\s|$|:|/)'
+    ]
+    
+    # Patterns that indicate local username confusion (common issue)
+    local_username_patterns = [
+        r'(^|\s)(/home/[^/\s]+)(\s|$)',  # Local home directories
+        r'(^|\s)(~/[^\s]*)(\s|$)',       # Local home shortcuts
+    ]
+    
+    # Commands that should not target localhost
+    risky_command_patterns = [
+        r'curl\s+',
+        r'wget\s+',
+        r'nmap\s+',
+        r'hydra\s+.*ssh',
+        r'nikto\s+',
+        r'sqlmap\s+',
+        r'dirb\s+',
+        r'gobuster\s+',
+        r'wpscan\s+',
+        r'ssh\s+',
+        r'nc\s+',
+        r'netcat\s+',
+        r'ftp\s+',
+        r'telnet\s+',
+        r'smbclient\s+'
+    ]
+    
+    # Check if this is a risky command
+    is_risky_command = any(re.search(pattern, command) for pattern in risky_command_patterns)
+    
+    if is_risky_command:
+        # Check if targeting localhost
+        targets_localhost = any(re.search(pattern, command) for pattern in localhost_patterns)
+        
+        if targets_localhost:
+            # Replace localhost references with a placeholder to avoid targeting local system
+            sanitized_command = command
+            for pattern in localhost_patterns:
+                sanitized_command = re.sub(pattern, r'\1$TARGET_IP\3', sanitized_command)
+            
+            sanitization_message = f"SECURITY: Command modified to use $TARGET_IP instead of localhost. You are on HTB Pwnbox - target the challenge machine, not localhost!"
+            print(f"[Agent] Sanitized localhost command: {command} -> {sanitized_command}")
+            return sanitized_command, sanitization_message
+    
+    # Check for local path confusion in file operations
+    has_local_paths = any(re.search(pattern, command) for pattern in local_username_patterns)
+    if has_local_paths and not any(cmd in command for cmd in ['cd', 'ls', 'cat', 'grep', 'find']):
+        sanitization_message = f"WARNING: Command contains local paths. Remember you're on HTB Pwnbox - adjust paths for the challenge environment."
+        print(f"[Agent] Local path warning for command: {command}")
+    
+    # If no sanitization was needed, return the original command
+    return command, sanitization_message
+
+
+def optimize_command(command: str) -> Tuple[str, Optional[str]]:
+    """
+    Optimize potentially slow commands and sanitize them for security.
+    
+    Args:
+        command (str): The command to optimize and sanitize
+        
+    Returns:
+        tuple: (optimized_command, combined_message)
+    """
+    # First sanitize the command
+    sanitized_command, sanitization_message = sanitize_command(command)
+    
+    # Then optimize it
     optimization_message = None
     
     # Optimize nmap commands
-    if 'nmap' in command and '--min-rate' not in command:
+    if 'nmap' in sanitized_command and '--min-rate' not in sanitized_command:
         # Check if this is a comprehensive scan that will take a long time
-        if any(flag in command for flag in ['-sS', '-sV', '-A', '-p-']):
+        if any(flag in sanitized_command for flag in ['-sS', '-sV', '-A', '-p-']):
             # Add min-rate parameter if not already present
-            optimized_command = command + ' --min-rate=1000' if '--min-rate' not in command else command
+            optimized_command = sanitized_command + ' --min-rate=1000' if '--min-rate' not in sanitized_command else sanitized_command
             optimization_message = f"Optimizing potentially slow nmap command with --min-rate=1000 to speed up execution."
-            print(f"[Agent] Optimized slow nmap command: {command} -> {optimized_command}")
-            return optimized_command, optimization_message
+            print(f"[Agent] Optimized slow nmap command: {sanitized_command} -> {optimized_command}")
+            return optimized_command, combine_messages(sanitization_message, optimization_message)
     
     # Add more command optimizations here as needed
     
-    return command, optimization_message
+    return sanitized_command, sanitization_message
+
+
+def combine_messages(message1: Optional[str], message2: Optional[str]) -> Optional[str]:
+    """Combine two messages into one if both are not None."""
+    if message1 and message2:
+        return f"{message1} {message2}"
+    elif message1:
+        return message1
+    elif message2:
+        return message2
+    else:
+        return None
