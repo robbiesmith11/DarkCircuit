@@ -22,6 +22,7 @@ from streaming_handler import StreamingHandler
 from agent_utils import load_prompts
 from Rag_tool import *
 from utils import get_path
+from context_manager import ContextManager
 
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=get_path(".env"))
@@ -151,6 +152,12 @@ class Darkcircuit_Agent:
         self.reasoning_prompt = SystemMessage(content=reasoning_prompt or DEFAULT_REASONING_PROMPT)
         self.response_prompt = SystemMessage(content=response_prompt or DEFAULT_RESPONSE_PROMPT)
 
+        # Initialize context manager for efficient token usage
+        self.context_manager = ContextManager(
+            max_context_tokens=12000,  # Reasonable limit for GPT-4
+            critical_info_tokens=3000   # Reserve tokens for critical info
+        )
+
     def _build_agent_graph(self):
         """Set up the LangGraph for agent reasoning."""
         builder = StateGraph(MessagesState)
@@ -213,10 +220,16 @@ class Darkcircuit_Agent:
         self.streaming_handler.output_target = "debug"
 
         try:
+            # Optimize context for long pentesting sessions
+            all_messages = state["messages"]
+            optimized_messages = self.context_manager.optimize_context(all_messages)
+            
+            print(f"[Agent] Context optimization: {len(all_messages)} -> {len(optimized_messages)} messages")
+            
             # When preparing messages for the reasoner, include the original user query
             # and system messages, but convert tool messages to system messages
             filtered_messages = []
-            for msg in state["messages"]:
+            for msg in optimized_messages:
                 if isinstance(msg, (HumanMessage, SystemMessage)):
                     filtered_messages.append(msg)
                 elif isinstance(msg, ToolMessage):
@@ -235,7 +248,7 @@ class Darkcircuit_Agent:
 
             # If no messages after filtering, check for the original human message
             if not filtered_messages:
-                for msg in state["messages"]:
+                for msg in optimized_messages:
                     if isinstance(msg, HumanMessage) or getattr(msg, "type", "") == "human":
                         filtered_messages.append(msg)
                         break
@@ -269,8 +282,8 @@ class Darkcircuit_Agent:
             # Flush the thinking buffer to send consolidated thinking content
             await self.streaming_handler._flush_thinking_buffer(done)
 
-            # Update the state with filtered messages and the result
-            new_messages = filtered_messages + [result]
+            # Update the state with optimized messages and the result
+            new_messages = optimized_messages + [result]
             return {**state, "messages": new_messages, "done": done, "step_count": step_count}
 
         except Exception as e:
