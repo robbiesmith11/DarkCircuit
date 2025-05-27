@@ -350,6 +350,36 @@ async def run_ssh_command(command: str, timeout: int = 1200) -> Dict[str, Any]:
         return {"success": False, "output": final, "error": "Timed out", "exit_code": -1}
 
 
+# Status and Health Check Endpoints
+@app.get("/api/rag/status")
+async def rag_status():
+    """Check RAG system loading status with detailed progress"""
+    from Rag_tool import is_rag_ready, get_loading_progress
+    
+    progress = get_loading_progress()
+    ready = is_rag_ready()
+    
+    if ready:
+        message = "RAG system ready"
+    elif progress["status"] == "error":
+        message = f"RAG loading failed: {progress['stage']}"
+    elif progress["status"] == "loading":
+        if progress["stage"] == "Generating embeddings" and progress["total_chunks"] > 0:
+            embedding_percent = int((progress["embedding_progress"] / progress["total_chunks"]) * 100)
+            message = f"{progress['stage']}: {progress['embedding_progress']}/{progress['total_chunks']} chunks ({embedding_percent}%)"
+        elif progress["total_files"] > 0:
+            message = f"{progress['stage']}: {progress['current_file']} ({progress['files_processed']}/{progress['total_files']}) - {progress['percentage']}%"
+        else:
+            message = f"{progress['stage']}"
+    else:
+        message = "RAG system loading in background..."
+    
+    return {
+        "rag_ready": ready,
+        "message": message,
+        "progress": progress
+    }
+
 # SSH Connection Management Endpoints
 # These endpoints handle establishing and managing SSH connections to external servers
 
@@ -704,6 +734,11 @@ app.mount("/", StaticFiles(directory=static_path, html=True), name="frontend")
 
 
 if __name__ == "__main__":
+    # Start RAG loading in background before server starts
+    from Rag_tool import start_rag_background_loading
+    print("🚀 Starting DarkCircuit server...")
+    print("📚 Initializing RAG system in background...")
+    start_rag_background_loading()
 
     async def run_uvicorn():
         config = Config(app=app, host="127.0.0.1", port=8000, loop="asyncio", lifespan="on")

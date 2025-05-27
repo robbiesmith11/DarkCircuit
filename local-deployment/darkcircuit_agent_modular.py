@@ -71,7 +71,15 @@ class Darkcircuit_Agent:
         @tool
         def rag_retrieve(query: str) -> str:
             """Search for relevant documents included are writeups from hack the box challenges using RAG"""
-            retriever = load_static_rag_context()
+            from Rag_tool import get_rag_retriever_async, is_rag_ready
+            
+            if not is_rag_ready():
+                return "⏳ RAG system is still loading in the background. Please try again in a moment, or continue without RAG context for now."
+            
+            retriever = get_rag_retriever_async()
+            if retriever is None:
+                return "⚠️ RAG system not available. Continuing without document context."
+            
             docs = retriever.get_relevant_documents(query)
             content_parts = []
             for i, doc in enumerate(docs):
